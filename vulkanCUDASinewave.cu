@@ -179,6 +179,13 @@ struct SwapChainSupportDetails {
   std::vector<VkPresentModeKHR> presentModes;
 };
 
+struct Texel {
+	stbi_uc r;
+	stbi_uc g;
+	stbi_uc b;
+	stbi_uc a;
+};
+
 struct Vertex {
   vec4 pos;
   vec3 color;
@@ -212,31 +219,21 @@ struct Vertex {
 size_t mesh_width = 0, mesh_height = 0;
 std::string execution_path;
 
-__global__ void sinewave_gen_kernel(Vertex* vertices, unsigned int width,
+__global__ void sinewave_gen_kernel(Texel* pixels, unsigned int width,
                                     unsigned int height, float time) {
-  unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
+  unsigned int x = (blockIdx.x * blockDim.x + threadIdx.x);
   unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
 
-  // calculate uv coordinates
-  float u = x / (float)width;
-  float v = y / (float)height;
-  u = u * 2.0f - 1.0f;
-  v = v * 2.0f - 1.0f;
+  //float freq = 4.0f;
+  //float w = 255 * sinf(freq + time) * cosf(freq + time) * 0.5f;
 
-  // calculate simple sine wave pattern
-  float freq = 4.0f;
-  float w = sinf(u * freq + time) * cosf(v * freq + time) * 0.5f;
-
-  if (y < height && x < width) {
-    // write output vertex
-    vertices[y * width + x].pos[0] = u;
-    vertices[y * width + x].pos[1] = w;
-    vertices[y * width + x].pos[2] = v;
-    vertices[y * width + x].pos[3] = 1.0f;
-    vertices[y * width + x].color[0] = 1.0f;
-    vertices[y * width + x].color[1] = 0.0f;
-    vertices[y * width + x].color[2] = 0.0f;
-  }
+  //if (y < height && x < width) {
+	//ABGR
+	  pixels[y * width + x].r = 50;
+	  pixels[y * width + x].g = 50;
+	  pixels[y * width + x].b = 255;
+	  pixels[y * width + x].a = 255;
+  //}
 }
 
 class vulkanCudaApp {
@@ -281,8 +278,13 @@ class vulkanCudaApp {
   VkSemaphore cudaUpdateVkVertexBufSemaphore;
   VkSemaphore vkUpdateCudaVertexBufSemaphore;
 
+
+  bool loadFromFile = true;
   VkImage textureImage;
   VkDeviceMemory textureImageMemory;
+  VkBuffer stagingBuffer;
+  VkDeviceMemory stagingBufferMemory;
+  stbi_uc* pixels;
   
   size_t vertexBufSize = 0;
   bool startSubmit = 0;
@@ -1096,6 +1098,11 @@ class vulkanCudaApp {
     VkSubpassDescription subpass = {};
     subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
 
+	//pColorAttachments lists which of the render pass’s attachments will be used as color attachments 
+	//in the subpass, and what layout each attachment will be in during the subpass. 
+	//Each element of the array corresponds to a fragment shader output location, 
+	//i.e. if the shader declared an output variable layout(location=X) then it uses the 
+	//attachment provided in pColorAttachments[X].
     subpass.colorAttachmentCount = 1;
     subpass.pColorAttachments = &colorAttachmentRef;
 
@@ -1106,7 +1113,12 @@ class vulkanCudaApp {
     renderPassInfo.subpassCount = 1;
     renderPassInfo.pSubpasses = &subpass;
 
-    VkSubpassDependency dependency = {};
+
+	//VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT specifies the stage of the pipeline 
+	//after blending where the final color values are output from the pipeline. 
+	//This stage also includes subpass load and store operations and multisample 
+	//resolve operations for framebuffer attachments with a color or depth/stencil format.
+	VkSubpassDependency dependency = {};
     dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
     dependency.dstSubpass = 0;
     dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
@@ -1277,10 +1289,13 @@ class vulkanCudaApp {
     checkCudaErrors(cudaStreamCreate(&streamToRun));
 
     dim3 block(16, 16, 1);
-    dim3 grid(mesh_width / 16, mesh_height / 16, 1);
-    Vertex* vertices = (Vertex*)cudaDevVertptr;
-    sinewave_gen_kernel<<<grid, block, 0, streamToRun>>>(vertices, mesh_width,
-                                                         mesh_height, 1.0);
+    dim3 grid(WIDTH / 16, HEIGHT / 16, 1);
+
+	//stbi_uc* pixelData = (stbi_uc*)cudaDevVertptr;
+
+	//sinewave_gen_kernel << <grid, block, 0, streamToRun >> > (pixels, WIDTH,
+	//	HEIGHT, 1.0);
+
     checkCudaErrors(cudaStreamSynchronize(streamToRun));
   }
 
@@ -1359,7 +1374,7 @@ class vulkanCudaApp {
       renderPassInfo.renderArea.offset = {0, 0};
       renderPassInfo.renderArea.extent = swapChainExtent;
 
-      VkClearValue clearColor = {0.5f, 0.5f, 0.5f, 1.0f};
+      VkClearValue clearColor = {0.5f, 0.1f, 0.1f, 1.0f};
       renderPassInfo.clearValueCount = 1;
       renderPassInfo.pClearValues = &clearColor;
 
@@ -1416,7 +1431,48 @@ class vulkanCudaApp {
 	  imageBlitRegion.dstSubresource.layerCount = 1;
 	  imageBlitRegion.dstOffsets[1] = blitSize;
 
+
+
+
+	  //TODO: writing direct to stagingBuffer in drawFrame is not working
+	  //Perhaps export pixels to CUDA and write to that and use below to convert to vkimage?
+
+	  //void* data;
+	  //vkMapMemory(device, stagingBufferMemory, 0, WIDTH*HEIGHT*4*sizeof(stbi_uc), 0, &data);
+	  //memcpy(data, pixels, static_cast<size_t>(WIDTH*HEIGHT * 4 * sizeof(stbi_uc)));
+	  //vkUnmapMemory(device, stagingBufferMemory);
+
+	  transitionImageLayout(commandBuffer, textureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+	  //copyBufferToImage(stagingBuffer, textureImage, static_cast<uint32_t>(WIDTH), static_cast<uint32_t>(HEIGHT));
+	  
+	  VkBufferImageCopy region = {};
+	  region.bufferOffset = 0;
+	  region.bufferRowLength = 0;
+	  region.bufferImageHeight = 0;
+	  region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	  region.imageSubresource.mipLevel = 0;
+	  region.imageSubresource.baseArrayLayer = 0;
+	  region.imageSubresource.layerCount = 1;
+
+	  region.imageOffset = { 0, 0, 0 };
+	  region.imageExtent = {
+		  WIDTH,
+		  HEIGHT,
+		  1
+	  };
+	  vkCmdCopyBufferToImage(
+		  commandBuffer,
+		  stagingBuffer,
+		  textureImage,
+		  VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+		  1,
+		  &region
+	  );
+	  
+	  transitionImageLayout(commandBuffer, textureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
 	  // Issue the blit command
+	  
 	  vkCmdBlitImage(
 		  commandBuffer,
 		  textureImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
@@ -1424,6 +1480,7 @@ class vulkanCudaApp {
 		  1,
 		  &imageBlitRegion,
 		  VK_FILTER_NEAREST);
+		 
 
 	  //WHAT THE FUCK IS HAPPENING
 	  /*
@@ -1668,54 +1725,59 @@ class vulkanCudaApp {
 
 	  endSingleTimeCommands(commandBuffer);
   }
+  void transitionImageLayout(VkCommandBuffer commandBuffer, VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout) {
+
+  VkImageMemoryBarrier barrier = {};
+  barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+  barrier.oldLayout = oldLayout;
+  barrier.newLayout = newLayout;
+  barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.image = image;
+  barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  barrier.subresourceRange.baseMipLevel = 0;
+  barrier.subresourceRange.levelCount = 1;
+  barrier.subresourceRange.baseArrayLayer = 0;
+  barrier.subresourceRange.layerCount = 1;
+  barrier.srcAccessMask = 0;
+  barrier.dstAccessMask = 0;
+  VkPipelineStageFlags sourceStage;
+  VkPipelineStageFlags destinationStage;
+
+  if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+	  barrier.srcAccessMask = 0;
+	  barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+	  sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+	  destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+  }
+  else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+	  barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+	  barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+	  sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+	  destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+  }
+  else {
+	  throw std::invalid_argument("unsupported layout transition!");
+  }
+
+  vkCmdPipelineBarrier(
+	  commandBuffer,
+	  sourceStage, destinationStage,
+	  0,
+	  0, nullptr,
+	  0, nullptr,
+	  1, &barrier
+  );
+}
+
   void transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout) {
 	  //See: https://vulkan-tutorial.com/Texture_mapping/Images#page_Texture_Image
 	  
 	  VkCommandBuffer commandBuffer = beginSingleTimeCommands();
 
-	  VkImageMemoryBarrier barrier = {};
-	  barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-	  barrier.oldLayout = oldLayout;
-	  barrier.newLayout = newLayout;
-	  barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-	  barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-	  barrier.image = image;
-	  barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-	  barrier.subresourceRange.baseMipLevel = 0;
-	  barrier.subresourceRange.levelCount = 1;
-	  barrier.subresourceRange.baseArrayLayer = 0;
-	  barrier.subresourceRange.layerCount = 1;
-	  barrier.srcAccessMask = 0;
-	  barrier.dstAccessMask = 0;
-	  VkPipelineStageFlags sourceStage;
-	  VkPipelineStageFlags destinationStage;
-
-	  if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
-		  barrier.srcAccessMask = 0;
-		  barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-
-		  sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-		  destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-	  }
-	  else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
-		  barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-		  barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-
-		  sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-		  destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-	  }
-	  else {
-		  throw std::invalid_argument("unsupported layout transition!");
-	  }
-
-	  vkCmdPipelineBarrier(
-		  commandBuffer,
-		  sourceStage, destinationStage,
-		  0,
-		  0, nullptr,
-		  0, nullptr,
-		  1, &barrier
-	  );
+	  transitionImageLayout(commandBuffer, image, format, oldLayout, newLayout);
 
 	  endSingleTimeCommands(commandBuffer);
   }
@@ -1754,33 +1816,53 @@ class vulkanCudaApp {
   }
 
   void createTextureImage() {
-	  int texWidth, texHeight, texChannels;
-	  stbi_uc* pixels = stbi_load("texture.jpg", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
-	  VkDeviceSize imageSize = texWidth * texHeight * 4;
 
-	  if (!pixels) {
-		  throw std::runtime_error("failed to load texture image!");
+	  
+	  VkDeviceSize imageSize = WIDTH * HEIGHT * 4 * sizeof(stbi_uc);
+
+	  //createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+	  
+	  //create vulkan buffer (for use with CUDA, hence ext)
+#ifdef _WIN64
+	  if (IsWindows8OrGreater()) {
+		  createBufferExtMem(imageSize,
+			  VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+		  VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT, stagingBuffer, stagingBufferMemory);
 	  }
+	  else {
+		  createBufferExtMem(imageSize,
+			  VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+		  VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_KMT_BIT, stagingBuffer, stagingBufferMemory);
+	  }
+#else
+		  createBufferExtMem(imageSize,
+			  VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+	  VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT, stagingBuffer, stagingBufferMemory);
+#endif
 
-	  VkBuffer stagingBuffer;
-	  VkDeviceMemory stagingBufferMemory;
-	  createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+		if (loadFromFile) {
+			int texWidth, texHeight, texChannels;
 
-	  void* data;
-	  vkMapMemory(device, stagingBufferMemory, 0, imageSize, 0, &data);
-	  memcpy(data, pixels, static_cast<size_t>(imageSize));
-	  vkUnmapMemory(device, stagingBufferMemory);
+			pixels = stbi_load("texture.jpg", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
 
-	  stbi_image_free(pixels);
+			if (!pixels) {
+				throw std::runtime_error("failed to load texture image!");
+			}
+			void* data;
+			vkMapMemory(device, stagingBufferMemory, 0, imageSize, 0, &data);
+			memcpy(data, pixels, static_cast<size_t>(imageSize));
+			vkUnmapMemory(device, stagingBufferMemory);
+		}
 
-	  createImage(texWidth, texHeight, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, textureImage, textureImageMemory);
+	  createImage(WIDTH, HEIGHT, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, textureImage, textureImageMemory);
 
 	  transitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-	  copyBufferToImage(stagingBuffer, textureImage, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
-
+	  copyBufferToImage(stagingBuffer, textureImage, static_cast<uint32_t>(WIDTH), static_cast<uint32_t>(HEIGHT));
 	  transitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-	  vkDestroyBuffer(device, stagingBuffer, nullptr);
-	  vkFreeMemory(device, stagingBufferMemory, nullptr);
+	  
   }
 
   void createImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory) {
@@ -1950,7 +2032,7 @@ class vulkanCudaApp {
     cudaExtMemHandleDesc.handle.fd =
         getVkMemHandle(VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT);
 #endif
-    cudaExtMemHandleDesc.size = sizeof(Vertex) * vertexBufSize;
+    cudaExtMemHandleDesc.size = 4 * sizeof(stbi_uc) * WIDTH * HEIGHT;
 
 	//External Memory Object = VkBuffer vertexBuffer
 	//Import "External Memory Object" into CUDA
@@ -1959,8 +2041,11 @@ class vulkanCudaApp {
 	
     cudaExternalMemoryBufferDesc cudaExtBufferDesc;
     cudaExtBufferDesc.offset = 0;
-    cudaExtBufferDesc.size = sizeof(Vertex) * vertexBufSize;
-    cudaExtBufferDesc.flags = 0;
+
+	//TODO: fix hack assumes texture.jpg is same dimensions as width/height
+	cudaExtBufferDesc.size = 4 * sizeof(stbi_uc) * WIDTH * HEIGHT;
+    
+	cudaExtBufferDesc.flags = 0;
 
 	//TODO: replace with "CUDA import VK Image"
 	//See: https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__EXTRES__INTEROP.html
@@ -2029,7 +2114,7 @@ class vulkanCudaApp {
     vkMemoryGetWin32HandleInfoKHR.sType =
         VK_STRUCTURE_TYPE_MEMORY_GET_WIN32_HANDLE_INFO_KHR;
     vkMemoryGetWin32HandleInfoKHR.pNext = NULL;
-    vkMemoryGetWin32HandleInfoKHR.memory = vertexBufferMemory;
+    vkMemoryGetWin32HandleInfoKHR.memory = stagingBufferMemory;
     vkMemoryGetWin32HandleInfoKHR.handleType =
         (VkExternalMemoryHandleTypeFlagBitsKHR)externalMemoryHandleType;
 
@@ -2046,7 +2131,7 @@ class vulkanCudaApp {
       VkMemoryGetFdInfoKHR vkMemoryGetFdInfoKHR = {};
       vkMemoryGetFdInfoKHR.sType = VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR;
       vkMemoryGetFdInfoKHR.pNext = NULL;
-      vkMemoryGetFdInfoKHR.memory = vertexBufferMemory;
+	  vkMemoryGetWin32HandleInfoKHR.memory = stagingBufferMemory;
       vkMemoryGetFdInfoKHR.handleType =
           VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT_KHR;
 
@@ -2132,11 +2217,17 @@ class vulkanCudaApp {
 
 	//Run CUDA Kernel
     dim3 block(16, 16, 1);
-    dim3 grid(mesh_width / block.x, mesh_height / block.y, 1);
-    Vertex* pos = (Vertex*)cudaDevVertptr;
+	dim3 grid(WIDTH / 16, HEIGHT / 16, 1);
+
     AnimTime += 0.1f;
-    sinewave_gen_kernel<<<grid, block, 0, streamToRun>>>(pos, mesh_width,
-                                                         mesh_height, AnimTime);
+
+	//stbi_uc* pixelData = (stbi_uc*)cudaDevVertptr;
+
+	Texel* pixelData = (Texel*)cudaDevVertptr;
+
+    sinewave_gen_kernel<<<grid, block, 0, streamToRun>>>(pixelData, WIDTH,
+                                                         HEIGHT, AnimTime);
+
 
 	//Signal CudaUpdateVk semaphore
     cudaVkSemaphoreSignal(cudaExtCudaUpdateVkVertexBufSemaphore);
@@ -2155,6 +2246,12 @@ class vulkanCudaApp {
     checkCudaErrors(
         cudaDestroyExternalSemaphore(cudaExtVkUpdateCudaVertexBufSemaphore));
     vkDestroySemaphore(device, vkUpdateCudaVertexBufSemaphore, nullptr);
+
+
+	vkDestroyBuffer(device, stagingBuffer, nullptr);
+	vkFreeMemory(device, stagingBufferMemory, nullptr);
+
+	if(loadFromFile) stbi_image_free(pixels);
 
 	vkDestroyImage(device, textureImage, nullptr);
 	vkFreeMemory(device, textureImageMemory, nullptr);
