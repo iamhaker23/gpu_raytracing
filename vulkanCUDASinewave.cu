@@ -34,10 +34,13 @@
 #include <GLFW/glfw3.h>
 #include <vulkan/vulkan.h>
 
+#include <chrono>
+#include <ctime>
+
+
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -258,12 +261,25 @@ __device__ float intersect(Sphere sphere, vec3 &rayorig, vec3 &raydir)
 	float d2 = dot(l, l) - tca * tca;
 	if (d2 > sphere.radius2) return -1.0f;
 	float thc = sqrt(sphere.radius2 - d2);
-	
+
 	float tmp1 = tca - thc;
 	float tmp2 = tca + thc;
+
 	if (tmp1 < 0) return tmp2;
-	else return tmp1;
-	
+	return tmp1;
+}
+
+__device__ float hasIntersection(Sphere sphere, vec3 &rayorig, vec3 &raydir)
+{
+	vec3 l = { 0 };
+	l[0] = sphere.center[0] - rayorig[0];
+	l[1] = sphere.center[1] - rayorig[1];
+	l[2] = sphere.center[2] - rayorig[2];
+
+	float tca = dot(l, raydir);
+	if (tca < 0) return false;
+	float d2 = dot(l, l) - tca * tca;
+	if (d2 > sphere.radius2) return false;
 	return true;
 }
 
@@ -305,14 +321,14 @@ std::string execution_path;
 
 const int MAX_RAY_DEPTH = 3;
 
-__device__ void setCol(Texel* col, float r, float g, float b) {
-	col->r = r;
-	col->g = g;
-	col->b = b;
+__device__ void setCol(Texel* col, float factor, float r, float g, float b) {
+	col->r = (col->r * (1.0f - factor)) + (factor * r);
+	col->g = (col->g * (1.0f - factor)) + (factor * g);
+	col->b = (col->b * (1.0f - factor)) + (factor * b);
 }
 
 template <int depth>
-__device__ void Raytrace(Texel* col, Sphere* spheres, int numSpheres, float ray_x, float ray_y, float ray_z, float orig_x, float orig_y, float orig_z)
+__device__ void Raytrace(Texel* col, float factor, Sphere* spheres, int numSpheres, float ray_x, float ray_y, float ray_z, float orig_x, float orig_y, float orig_z)
 {
 	//set colours by screen position
 	//setCol(col, ray_x, ray_y, ray_x / ray_y);
@@ -343,7 +359,7 @@ __device__ void Raytrace(Texel* col, Sphere* spheres, int numSpheres, float ray_
 	// find intersection of this ray with the sphere in the scene
 	for (unsigned i = 0; i < numSpheres; ++i) {
 		float t = intersect(spheres[i], rayorig, raydir);
-		if (t >= 0.0f) {
+		if (t != -1.0f) {
 			if (t < tnear) {
 				tnear = t;
 				sphere = &spheres[i];
@@ -355,20 +371,20 @@ __device__ void Raytrace(Texel* col, Sphere* spheres, int numSpheres, float ray_
 	//no intersection = background
 	if (!sphere) {
 
-		setCol(col, 100, 100, 100);
+		setCol(col, factor, 100, 100, 100);
 		return;
 	}
 	else {
-		setCol(col, 0, 0, 255);
+		setCol(col, factor, 0, 0, 255);
 	}
 
 	//spheres are easy and fast because the normal is from centre-to-surface
 	//and the hit point it the point on the closest intersection of radius and raydir
 
-	vec3 phit;
-	phit[0] = orig_x + ray_x * tnear;
-	phit[1] = orig_y + ray_y * tnear;
-	phit[2] = orig_z + ray_z * tnear;
+	vec3 phit = { 0 };
+	phit[0] = orig_x + (raydir[0] * tnear);
+	phit[1] = orig_y + (raydir[1] * tnear);
+	phit[2] = orig_z + (raydir[2] * tnear);
 	
 	//Get normal at hit (and normalize it)
 	vec3 nhit;
@@ -436,9 +452,9 @@ __device__ void Raytrace(Texel* col, Sphere* spheres, int numSpheres, float ray_
 
 	//shadow query point is just outside sphere to avoid self-shadowing
 	vec3 shadowQueryPoint = { 0 };
-	shadowQueryPoint[0] = phit[0] + nnhit[0] *bias;
-	shadowQueryPoint[1] = phit[1] + nnhit[1] *bias;
-	shadowQueryPoint[2] = phit[2] + nnhit[2] *bias;
+	shadowQueryPoint[0] = phit[0] + (nnhit[0] * FLT_MIN * 5.0f);
+	shadowQueryPoint[1] = phit[1] + (nnhit[1] * FLT_MIN * 5.0f);
+	shadowQueryPoint[2] = phit[2] + (nnhit[2] * FLT_MIN * 5.0f);
 	
 	vec3 lighting = { 0 };
 
@@ -466,10 +482,9 @@ __device__ void Raytrace(Texel* col, Sphere* spheres, int numSpheres, float ray_
 
 				for (unsigned j = 0; j < numSpheres; j++) {
 					if (i != j && j != selfIndex) {
-						float t = intersect(spheres[j], shadowQueryPoint, nld);
 						//criteria too sensitive - everything in shadow
-						if (t >= 0.0f) {
-							shadowMultiplier = 0.0f;
+						if (hasIntersection(spheres[j], shadowQueryPoint, nld)) {
+							shadowMultiplier = 1000000.0f / (lMag * lMag);
 							break;
 						}
 					}
@@ -494,6 +509,7 @@ __device__ void Raytrace(Texel* col, Sphere* spheres, int numSpheres, float ray_
 	//TODO 25/03: WHY SHROWDED IN SHADOWS!?
 
 	setCol(col
+		,factor
 		, min(1.0f, lighting[0]) * 255
 		, min(1.0f, lighting[1]) * 255
 		, min(1.0f, lighting[2]) * 255);
@@ -517,18 +533,27 @@ __device__ void Raytrace(Texel* col, Sphere* spheres, int numSpheres, float ray_
 }
 
 template<>
-__device__ void Raytrace<MAX_RAY_DEPTH>(Texel* col, Sphere* spheres, int numSpheres, float ray_x, float ray_y, float ray_z, float origin_x, float origin_y, float origin_z)
+__device__ void Raytrace<MAX_RAY_DEPTH>(Texel* col, float factor, Sphere* spheres, int numSpheres, float ray_x, float ray_y, float ray_z, float origin_x, float origin_y, float origin_z)
 {
 	return;
 }
 
-__global__ void sinewave_gen_kernel(Texel* pixels, Sphere* spheres, int numSpheres, unsigned int width,
-	unsigned int height, float time) {
-	unsigned int x_int = (blockIdx.x * blockDim.x + threadIdx.x);
-	unsigned int y_int = (blockIdx.y * blockDim.y + threadIdx.y);
+__global__ void sinewave_gen_kernel(Texel* pixels, Sphere* spheres, int numSpheres, float cam_x, float cam_y, int frame, float factor) {
+	unsigned int x_int = (blockIdx.x * blockDim.x + threadIdx.x) * 2;
+	unsigned int y_int = (blockIdx.y * blockDim.y + threadIdx.y) * 2;
 	
+	//frame pattern
+	//nw, ne, sw, se
+	if (frame == 2 || frame == 4) {
+		x_int = x_int + 1;
+	}
+	if (frame == 3 || frame == 4) {
+		y_int = y_int + 1;
+	}
+
 	int x = (x_int - (WIDTH/2));
 	int y = (y_int - (HEIGHT/2));
+	
 	//float x = (x_int) / width;
 	//float y = (y_int) / height;
 
@@ -540,21 +565,104 @@ __global__ void sinewave_gen_kernel(Texel* pixels, Sphere* spheres, int numSpher
 	}
 	*/
 	
-	if (x_int < width && y_int < height) {
-		
+	if (x_int < WIDTH && y_int < HEIGHT) {
+
 		Raytrace<1>(
 			//image
-			&pixels[y_int * width + x_int]
+			&pixels[y_int * WIDTH + x_int]
+			//factor to keep old color
+			,factor
 			//spheres
 			, spheres, numSpheres
 			//cam projection (smaller z = larger fov)
 			, x, y, -800
 			//cam pos
-			, WIDTH/-2.0f, HEIGHT/-2.0f, 5000);
+			, cam_x + (WIDTH/-2.0f), cam_y + (HEIGHT/-2.0f), 5000);
 	}
 }
 
 ////END RAYTRACING
+
+//Global to program
+Sphere* spheres;
+const int NUM_SPHERES = 4;
+void* cudaSpheres;
+//Player State
+bool spheresChanged;
+float cam_x = 0.0f;
+float cam_y = 0.0f;
+
+//render half the pixels in each dimension
+//TODO: hardcoded for a trail size=2
+int frameStep = 1;
+int TRAIL_SIZE = 2;
+float frameRefresh = 1.0f;
+float PERSISTENCE = 2.0f;
+
+bool keys[6] = { 0 };
+
+std::chrono::system_clock::time_point WIN_CTIME = std::chrono::system_clock::now();
+int oldTicks = 0;
+
+//See:
+//The callback function receives the keyboard key
+//platform-specific scancode, key action and modifier bits.
+void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods)
+{
+	spheresChanged = false;
+
+	if (action == GLFW_RELEASE) {
+		switch (key) {
+		case (GLFW_KEY_R):
+			keys[0] = false;
+			break;
+		case (GLFW_KEY_F):
+			keys[1] = false;
+			break;
+		case(GLFW_KEY_A):
+			keys[2] = false;
+			break;
+		case(GLFW_KEY_D):
+			keys[3] = false;
+			break;
+		case (GLFW_KEY_W):
+			keys[4] = false;
+			break;
+		case (GLFW_KEY_S):
+			keys[5] = false;
+			break;
+		default:
+			break;
+		}
+	}
+	else {
+		switch (key) {
+		case (GLFW_KEY_R):
+			keys[0] = true;
+			break;
+		case (GLFW_KEY_F):
+			keys[1] = true;
+			break;
+		case(GLFW_KEY_A):
+			keys[2] = true;
+			break;
+		case(GLFW_KEY_D):
+			keys[3] = true;
+			break;
+		case (GLFW_KEY_W):
+			keys[4] = true;
+			break;
+		case (GLFW_KEY_S):
+			keys[5] = true;
+			break;
+		default:
+			break;
+		}
+	}
+}
+
+//TES25TH-MORROWIND
+
 
 class vulkanCudaApp {
  public:
@@ -610,9 +718,6 @@ class vulkanCudaApp {
   bool startSubmit = 0;
   double AnimTime = 1.0f;
 
-  Sphere* spheres;
-  const int NUM_SPHERES = 4;
-  void* cudaSpheres;
 
   VkDebugReportCallbackEXT callback;
 
@@ -1643,9 +1748,9 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
 		, 1,
 		ec);
 
-	c[0] = -1000.0f; c[1] = -3500; c[2] = -100;
+	c[0] = -1000.0f; c[1] = -3500.0f; c[2] = -100.0f;
 	sc[0] = 1.0f; sc[1] = 1.0f; sc[2] = 1.0f;
-	ec[0] = 0.8f; ec[1] = 0.2f; ec[2] = 0.8f;
+	ec[0] = 0.9f; ec[1] = 1.0f; ec[2] = 1.0f;
 
 	spheres[2] = Sphere(c
 		, 500.0f
@@ -1917,9 +2022,12 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
     return buffer;
   }
 
+
+
   void mainLoop() {
     updateUniformBuffer();
-
+	glfwSetKeyCallback(window, key_callback);
+	
     while (!glfwWindowShouldClose(window)) {
       glfwPollEvents();
       drawFrame();
@@ -2000,45 +2108,82 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
   }
 
   void drawFrame() {
-    uint32_t imageIndex;
-    vkAcquireNextImageKHR(device, swapChain,
-                          std::numeric_limits<uint64_t>::max(),
-                          imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
 
-	//Draw image - 
-    if (!startSubmit) {
-      submitVulkan(imageIndex);
-      startSubmit = 1;
-    } else {
-      submitVulkanCuda(imageIndex);
-    }
 
-    VkPresentInfoKHR presentInfo = {};
-    presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+	  if (keys[0] || keys[1]) {
+		  spheres[2].center[1] += (keys[0]) ? 0.1f : -0.1f;
+		  spheresChanged = true;
+	  }
+	  if (keys[2] || keys[3]) {
+		  cam_x += (keys[2]) ? -0.1f : 0.1f;
+	  }
+	  if (keys[4] || keys[5]){
+		  cam_y += (keys[4]) ? -0.1f : 0.1f;
+		}
 
-    VkSemaphore signalSemaphores[] = {renderFinishedSemaphore};
+	  std::chrono::system_clock::time_point cNow = std::chrono::system_clock::now();
 
-    presentInfo.waitSemaphoreCount = 1;
-    presentInfo.pWaitSemaphores = signalSemaphores;
+	  //Every other tick of the given frequency render a frame
+	  //std::ratio<1, 120> gives 60fps
+	  //std::ratio<1, 100> gives 50fps
+	  //std::ratio<1, 60> gives 30fps
+	  //std::ratio<1, 70> gives 35fps
+	  int ticks = (int)(std::chrono::duration<float, std::ratio<1, 100>>(cNow - WIN_CTIME).count());
+	 
+	  if (((ticks % 2 == 1) && ticks != oldTicks)) {
+		  WIN_CTIME = cNow;
+		  oldTicks = ticks;
 
-    VkSwapchainKHR swapChains[] = {swapChain};
-    presentInfo.swapchainCount = 1;
-    presentInfo.pSwapchains = swapChains;
-    presentInfo.pImageIndices = &imageIndex;
-    presentInfo.pResults = nullptr;  // Optional
+		uint32_t imageIndex;
+		vkAcquireNextImageKHR(device, swapChain,
+			std::numeric_limits<uint64_t>::max(),
+			imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
 
-	//Draw image to screen
-    vkQueuePresentKHR(presentQueue, &presentInfo);
+		//Vulkan draw first frame
+		//CUDA draw all subsequent frames
+		if (!startSubmit) {
+			submitVulkan(imageIndex);
+			startSubmit = 1;
+		}
+		else {
+			submitVulkanCuda(imageIndex);
+		}
 
-	//TODO: replace this with ray-tracing kernel
-	//TODO: Consider Vulkan Compute shader - https://github.com/SaschaWillems/Vulkan/blob/master/examples/raytracing/raytracing.cpp
+		VkPresentInfoKHR presentInfo = {};
+		presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
 
-	//Run CUDA Kernel (waits for render sempaphores to signal)
-    cudaUpdateVertexBuffer();
-    
+		VkSemaphore signalSemaphores[] = { renderFinishedSemaphore };
+
+		presentInfo.waitSemaphoreCount = 1;
+		presentInfo.pWaitSemaphores = signalSemaphores;
+
+		VkSwapchainKHR swapChains[] = { swapChain };
+		presentInfo.swapchainCount = 1;
+		presentInfo.pSwapchains = swapChains;
+		presentInfo.pImageIndices = &imageIndex;
+		presentInfo.pResults = nullptr;  // Optional
+
+		//Draw image to screen
+		vkQueuePresentKHR(presentQueue, &presentInfo);
+
+		//TODO: replace this with ray-tracing kernel
+		//TODO: Consider Vulkan Compute shader - https://github.com/SaschaWillems/Vulkan/blob/master/examples/raytracing/raytracing.cpp
+	
+		//Run CUDA Kernel (waits for render sempaphores to signal)
+		cudaUpdateVertexBuffer();
+
+	}
+
 	// Added sleep of 10 millisecs so that CPU does not submit too much work to
-    // GPU
-    std::this_thread::sleep_for(std::chrono::microseconds(30000));
+	// GPU
+	//std::this_thread::sleep_for(std::chrono::microseconds(30000));
+	
+	//
+	////if it's been a second since last tic
+	//if (std::chrono::duration_cast<std::chrono::milliseconds>(cNow - WIN_CTIME).count() >= 1000) {
+	//	WIN_CTIME = cNow;
+	//}
+
   }
 
   void copyBufferToImage(VkCommandBuffer commandBuffer, VkBuffer buffer, VkImage image, uint32_t width, uint32_t height) {
@@ -2574,37 +2719,47 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
 	//Signalled by submitVulkan() and submitVulkanCuda()
     cudaVkSemaphoreWait(cudaExtVkUpdateCudaVertexBufSemaphore);
 
-	//Run CUDA Kernel
-    dim3 block(16, 16, 1);
-	dim3 grid(WIDTH / 16, HEIGHT / 16, 1);
-
-    AnimTime += 0.1f;
-
 	//stbi_uc* pixelData = (stbi_uc*)cudaDevVertptr;
 
 	Texel* pixelData = (Texel*)cudaDevVertptr;
-
-	spheres[0].center[0] -= 10.0f;
-	spheres[0].center[1] -= 10.0f;
-	spheres[0].center[2] -= 10.0f;
-
-	//checkCudaErrors(cudaMallocManaged((void**)&cudaSpheres, NUM_SPHERES * sizeof(Sphere), cudaMemAttachGlobal));
 	
-	/*
-	checkCudaErrors(
-		cudaMemcpyAsync(
-			cudaSpheres
-			, spheres
-			, NUM_SPHERES * sizeof(Sphere)
-			, cudaMemcpyHostToDevice
-			, streamToRun
-		)
-	);
-	*/
+	//checkCudaErrors(cudaMallocManaged((void**)&cudaSpheres, NUM_SPHERES * sizeof(Sphere), cudaMemAttachGlobal));
+	if (spheresChanged) {
+		spheresChanged = false;
+		checkCudaErrors(
+			cudaMemcpyAsync(
+				cudaSpheres
+				, spheres
+				, NUM_SPHERES * sizeof(Sphere)
+				, cudaMemcpyHostToDevice
+				, streamToRun
+			)
+		);
+	}
 
-
-    sinewave_gen_kernel<<<grid, block, 0, streamToRun>>>(pixelData, (Sphere*)cudaSpheres, NUM_SPHERES, WIDTH,
-    HEIGHT, AnimTime);
+	//Run CUDA Kernel
+	dim3 block(32, 32, 1);
+	dim3 grid(WIDTH / 64, HEIGHT / 64, 1);
+	
+    sinewave_gen_kernel<<<grid, block, 0, streamToRun>>>(
+		pixelData
+		, (Sphere*)cudaSpheres
+		, NUM_SPHERES
+		, cam_x
+		, cam_y
+		, frameStep
+		//TODO: this causes strobing ffs
+		//, (frameRefresh / PERSISTENCE) );
+		, 1.0f);
+	
+	//keep count of what sub-frame is being rendered
+	frameStep = ( (frameStep) < (TRAIL_SIZE*TRAIL_SIZE) ) ? frameStep + 1 : 1;
+	
+	//keep count of which frame we're on
+	if (frameStep == 1) {
+		frameRefresh = (frameRefresh < PERSISTENCE) ? frameRefresh + 1.0f : 1.0f;
+		if (frameRefresh > PERSISTENCE) frameRefresh = PERSISTENCE;
+	}
 
 	//Signal CudaUpdateVk semaphore
     cudaVkSemaphoreSignal(cudaExtCudaUpdateVkVertexBufSemaphore);
