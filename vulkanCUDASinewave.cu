@@ -184,7 +184,89 @@ struct Texel {
 	stbi_uc g;
 	stbi_uc b;
 	stbi_uc a;
+
+	Texel(unsigned char r, unsigned char g, unsigned char b, unsigned char a) {
+		this->r = b;
+		this->g = g;
+		this->b = r;
+		this->a = a;
+	}
+	Texel() {
+		this->r = 0;
+		this->g = 0;
+		this->b = 0;
+		this->a = 0;
+	}
+
 };
+
+struct Sphere
+{
+	vec3 center;                           /// position of the sphere
+	float radius, radius2;                  /// sphere radius and radius^2
+	vec3 surfaceColor, emissionColor;      /// surface color and emission (light)
+	float transparency, reflection;         /// surface transparency and reflectivity
+	Sphere(
+		const vec3 &c,
+		const float &r,
+		const vec3 &sc,
+		const float &refl,
+		const float &transp,
+		const vec3 &ec) {
+
+		center[0] = c[0];
+		center[1] = c[1];
+		center[2] = c[2];
+
+		surfaceColor[0] = sc[0];
+		surfaceColor[1] = sc[1];
+		surfaceColor[2] = sc[2];
+
+		emissionColor[0] = ec[0];
+		emissionColor[1] = ec[1];
+		emissionColor[2] = ec[2];
+
+		transparency = transp;
+		reflection = refl;
+
+		radius = r;
+		radius2 = r * r;
+
+	}
+	
+};
+
+__device__ float magnitude(vec3 v) {
+	float total = sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
+	return total;
+
+}
+
+__device__ float dot(vec3 l, vec3 r) {
+	return (l[0] * r[0]) + (l[1] * r[1]) + (l[2] * r[2]);
+}
+
+__device__ float intersect(Sphere sphere, vec3 &rayorig, vec3 &raydir)
+{
+	vec3 l = { 0 };
+	l[0] = sphere.center[0] - rayorig[0];
+	l[1] = sphere.center[1] - rayorig[1];
+	l[2] = sphere.center[2] - rayorig[2];
+
+	float tca = dot(l, raydir);
+	if (tca < 0) return -1.0f;
+	float d2 = dot(l, l) - tca * tca;
+	if (d2 > sphere.radius2) return -1.0f;
+	float thc = sqrt(sphere.radius2 - d2);
+	
+	float tmp1 = tca - thc;
+	float tmp2 = tca + thc;
+	if (tmp1 < 0) return tmp2;
+	else return tmp1;
+	
+	return true;
+}
+
 
 struct Vertex {
   vec4 pos;
@@ -219,22 +301,260 @@ struct Vertex {
 size_t mesh_width = 0, mesh_height = 0;
 std::string execution_path;
 
-__global__ void sinewave_gen_kernel(Texel* pixels, unsigned int width,
-                                    unsigned int height, float time) {
-  unsigned int x = (blockIdx.x * blockDim.x + threadIdx.x);
-  unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
+////START RAYTRACING
 
-  //float freq = 4.0f;
-  //float w = 255 * sinf(freq + time) * cosf(freq + time) * 0.5f;
+const int MAX_RAY_DEPTH = 3;
 
-  //if (y < height && x < width) {
-	//ABGR
-	  pixels[y * width + x].r = 50;
-	  pixels[y * width + x].g = 50;
-	  pixels[y * width + x].b = 255;
-	  pixels[y * width + x].a = 255;
-  //}
+__device__ void setCol(Texel* col, float r, float g, float b) {
+	col->r = r;
+	col->g = g;
+	col->b = b;
 }
+
+template <int depth>
+__device__ void Raytrace(Texel* col, Sphere* spheres, int numSpheres, float ray_x, float ray_y, float ray_z, float orig_x, float orig_y, float orig_z)
+{
+	//set colours by screen position
+	//setCol(col, ray_x, ray_y, ray_x / ray_y);
+	//setCol(col, spheres[0].surfaceColor.r, spheres[0].surfaceColor.g, spheres[0].surfaceColor.b);
+	//return;
+
+	vec3 raydir = { 0 };
+
+	raydir[0] = ray_x;
+	raydir[1] = ray_y;
+	raydir[2] = ray_z;
+
+	float rdMag = magnitude(raydir);
+	raydir[0] = ray_x / rdMag;
+	raydir[1] = ray_y / rdMag;
+	raydir[2] = ray_z / rdMag;
+	
+	vec3 rayorig = { 0 };
+
+	rayorig[0] = orig_x;
+	rayorig[1] = orig_y;
+	rayorig[2] = orig_z;
+
+	float tnear = INFINITY;
+
+	Sphere* sphere = NULL;
+	int selfIndex = -1;
+	// find intersection of this ray with the sphere in the scene
+	for (unsigned i = 0; i < numSpheres; ++i) {
+		float t = intersect(spheres[i], rayorig, raydir);
+		if (t >= 0.0f) {
+			if (t < tnear) {
+				tnear = t;
+				sphere = &spheres[i];
+				selfIndex = i;
+			}
+		}
+	}
+
+	//no intersection = background
+	if (!sphere) {
+
+		setCol(col, 100, 100, 100);
+		return;
+	}
+	else {
+		setCol(col, 0, 0, 255);
+	}
+
+	//spheres are easy and fast because the normal is from centre-to-surface
+	//and the hit point it the point on the closest intersection of radius and raydir
+
+	vec3 phit;
+	phit[0] = orig_x + ray_x * tnear;
+	phit[1] = orig_y + ray_y * tnear;
+	phit[2] = orig_z + ray_z * tnear;
+	
+	//Get normal at hit (and normalize it)
+	vec3 nhit;
+	nhit[0] = phit[0] - sphere->center[0];
+	nhit[1] = phit[1] - sphere->center[1];
+	nhit[2] = phit[2] - sphere->center[2];
+
+	//super fast normalisation, yeah boi
+	float mag = magnitude(nhit);
+	vec3 nnhit = { 0 };
+	nnhit[0] = nhit[0] / mag;
+	nnhit[1] = nhit[1] / mag;
+	nnhit[2] = nhit[2] / mag;
+
+	// If the normal and the view direction are not opposite to each other
+	// reverse the normal direction. That also means we are inside the sphere so set
+	// the inside bool to true. Finally reverse the sign of IdotN which we want
+	// positive.
+	//bool inside = true;
+
+	if (dot(nnhit, raydir) > 0) {
+		nnhit[0] = -nnhit[0];
+		nnhit[1] = -nnhit[1];
+		nnhit[2] = -nnhit[2];
+		//inside = false;
+	}
+
+	float bias = 1e-4; // add some bias to the point from which we will be tracing
+
+	/*
+	//REFLECTIONS
+
+	if ((sphere->transparency > 0 || sphere->reflection > 0) && depth < MAX_RAY_DEPTH) {
+		float facingratio = -raydir.dot(nhit);
+		// change the mix value to tweak the effect
+		float fresneleffect = mix(pow(1 - facingratio, 3), 1, 0.1);
+		// compute reflection direction (not need to normalize because all vectors
+		// are already normalized)
+		Vec3f refldir = raydir - nhit * 2 * raydir.dot(nhit);
+		refldir.normalize();
+		Vec3f reflection = 0;
+
+		if (sphere->reflection) {
+			reflection = trace(phit + nhit * bias, refldir, spheres, depth + 1);
+		}
+
+		Vec3f refraction = 0;
+		// if the sphere is also transparent compute refraction ray (transmission)
+		if (sphere->transparency) {
+			float ior = 1.01, eta = (inside) ? ior : 1 / ior; // are we inside or outside the surface?
+			float cosi = -nhit.dot(raydir);
+			float k = 1 - eta * eta * (1 - cosi * cosi);
+			Vec3f refrdir = (raydir * eta) + nhit * (eta *  cosi - (k));
+			refrdir.normalize();
+			refraction = trace(phit - nhit * bias, refrdir, spheres, depth + 1);
+		}
+		// the result is a mix of reflection and refraction (if the sphere is transparent)
+		surfaceColor = (
+			(reflection * fresneleffect) +
+			(refraction * (1 - fresneleffect) * sphere->transparency)
+			) * sphere->surfaceColor;
+	}
+	else {
+	*/
+
+	//shadow query point is just outside sphere to avoid self-shadowing
+	vec3 shadowQueryPoint = { 0 };
+	shadowQueryPoint[0] = phit[0] + nnhit[0] *bias;
+	shadowQueryPoint[1] = phit[1] + nnhit[1] *bias;
+	shadowQueryPoint[2] = phit[2] + nnhit[2] *bias;
+	
+	vec3 lighting = { 0 };
+
+	// it's a diffuse object, no need to raytrace any further
+	for (unsigned i = 0; i < numSpheres; ++i) {
+		if (spheres[i].emissionColor[0] > 0) {
+
+			float shadowMultiplier = 1.0f;
+			float m = 1.0f;
+
+			//if a light is being drawn, it will not be affected by shadows
+			//otherwise, we have a diffuse object so calculate shadows
+			if (i != selfIndex) {
+				// this is a light
+				vec3 lightDirection = { 0 };
+				lightDirection[0] = spheres[i].center[0] - phit[0];
+				lightDirection[1] = spheres[i].center[1] - phit[1];
+				lightDirection[2] = spheres[i].center[2] - phit[2];
+
+				float lMag = magnitude(lightDirection); // normalize normal direction
+				vec3 nld = { 0 };
+				nld[0] = lightDirection[0] / lMag;
+				nld[1] = lightDirection[1] / lMag;
+				nld[2] = lightDirection[2] / lMag;
+
+				for (unsigned j = 0; j < numSpheres; j++) {
+					if (i != j && j != selfIndex) {
+						float t = intersect(spheres[j], shadowQueryPoint, nld);
+						//criteria too sensitive - everything in shadow
+						if (t >= 0.0f) {
+							shadowMultiplier = 0.0f;
+							break;
+						}
+					}
+				}
+
+				//m does not change per pixel of object
+				m = dot(nnhit, nld);
+				m = max(0.0f, m);
+
+			}
+
+			lighting[0] += (sphere->surfaceColor[0] * shadowMultiplier *
+				m * spheres[i].emissionColor[0]);
+			lighting[1] += (sphere->surfaceColor[1] * shadowMultiplier *
+				m * spheres[i].emissionColor[1]);
+			lighting[2] += (sphere->surfaceColor[2] * shadowMultiplier *
+				m * spheres[i].emissionColor[2]);
+		}
+
+	}
+
+	//TODO 25/03: WHY SHROWDED IN SHADOWS!?
+
+	setCol(col
+		, min(1.0f, lighting[0]) * 255
+		, min(1.0f, lighting[1]) * 255
+		, min(1.0f, lighting[2]) * 255);
+
+	/*
+	vec3 refldir = { 0 };
+	float rayhitdot = dot(raydir, nnhit);
+	refldir[0] = raydir[0] - nnhit[0] * 2 * rayhitdot;
+	refldir[1] = raydir[1] - nnhit[1] * 2 * rayhitdot;
+	refldir[2] = raydir[2] - nnhit[2] * 2 * rayhitdot;
+
+	float reflDirMag = magnitude(refldir);
+	refldir[0] = refldir[0] / reflDirMag;
+	refldir[1] = refldir[1] / reflDirMag;
+	refldir[2] = refldir[2] / reflDirMag;
+
+	if (sphere->reflection) {
+		Raytrace<depth + 1>(col, spheres, numSpheres, refldir[0], refldir[1], refldir[2],
+			phit[0], phit[1], phit[2] );
+	}*/
+}
+
+template<>
+__device__ void Raytrace<MAX_RAY_DEPTH>(Texel* col, Sphere* spheres, int numSpheres, float ray_x, float ray_y, float ray_z, float origin_x, float origin_y, float origin_z)
+{
+	return;
+}
+
+__global__ void sinewave_gen_kernel(Texel* pixels, Sphere* spheres, int numSpheres, unsigned int width,
+	unsigned int height, float time) {
+	unsigned int x_int = (blockIdx.x * blockDim.x + threadIdx.x);
+	unsigned int y_int = (blockIdx.y * blockDim.y + threadIdx.y);
+	
+	int x = (x_int - (WIDTH/2));
+	int y = (y_int - (HEIGHT/2));
+	//float x = (x_int) / width;
+	//float y = (y_int) / height;
+
+	//float w = 255 * (sinf(time) * 0.5f + 0.5f);// *cosf(freq + time) * 0.5f;
+
+	/*
+	for (int i = 0; i < numSpheres; i++) {
+		spheres[i].radius -= 100.0f;
+	}
+	*/
+	
+	if (x_int < width && y_int < height) {
+		
+		Raytrace<1>(
+			//image
+			&pixels[y_int * width + x_int]
+			//spheres
+			, spheres, numSpheres
+			//cam projection (smaller z = larger fov)
+			, x, y, -800
+			//cam pos
+			, WIDTH/-2.0f, HEIGHT/-2.0f, 5000);
+	}
+}
+
+////END RAYTRACING
 
 class vulkanCudaApp {
  public:
@@ -289,6 +609,10 @@ class vulkanCudaApp {
   size_t vertexBufSize = 0;
   bool startSubmit = 0;
   double AnimTime = 1.0f;
+
+  Sphere* spheres;
+  const int NUM_SPHERES = 4;
+  void* cudaSpheres;
 
   VkDebugReportCallbackEXT callback;
 
@@ -370,7 +694,8 @@ class vulkanCudaApp {
   void setupDebugCallback() {
     if (!enableValidationLayers) return;
 
-    VkDebugReportCallbackCreateInfoEXT createInfo = {};
+/*
+VkDebugReportCallbackCreateInfoEXT createInfo = {};
     createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT;
     createInfo.flags =
         VK_DEBUG_REPORT_ERROR_BIT_EXT | VK_DEBUG_REPORT_WARNING_BIT_EXT;
@@ -380,6 +705,7 @@ class vulkanCudaApp {
                                      &callback) != VK_SUCCESS) {
       throw std::runtime_error("failed to set up debug callback!");
     }
+	*/
   }
   void initWindow() {
     glfwInit();
@@ -1113,7 +1439,6 @@ class vulkanCudaApp {
     renderPassInfo.subpassCount = 1;
     renderPassInfo.pSubpasses = &subpass;
 
-
 	//VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT specifies the stage of the pipeline 
 	//after blending where the final color values are output from the pipeline. 
 	//This stage also includes subpass load and store operations and multisample 
@@ -1291,6 +1616,59 @@ class vulkanCudaApp {
     dim3 block(16, 16, 1);
     dim3 grid(WIDTH / 16, HEIGHT / 16, 1);
 
+
+	vec3 c, sc, ec;
+	c[0] = 0.0f; c[1] = 0.0f; c[2] = -1000.0f;
+	
+	sc[0] = 0.5f; sc[1] = 0.5f; sc[2] = 0.5f;
+	ec[0] = 0; ec[1] = 0; ec[2] = 0;
+
+	spheres = (Sphere*)malloc(NUM_SPHERES * sizeof(Sphere));
+
+	spheres[0] = Sphere(c
+		, 500.0f
+		, sc
+		, 1
+		, 1,
+		ec);
+
+	c[0] = 0.0f; c[1] = -2000.0f; c[2] = -5000.0f;
+	sc[0] = 0.2f; sc[1] = 0.2f; sc[2] = 0.2f;
+	ec[0] = 0; ec[1] = 0; ec[2] = 0;
+
+	spheres[1] = Sphere(c
+		, 1000.0f
+		, sc
+		, 1
+		, 1,
+		ec);
+
+	c[0] = -1000.0f; c[1] = -3500; c[2] = -100;
+	sc[0] = 1.0f; sc[1] = 1.0f; sc[2] = 1.0f;
+	ec[0] = 0.8f; ec[1] = 0.2f; ec[2] = 0.8f;
+
+	spheres[2] = Sphere(c
+		, 500.0f
+		, sc
+		, 1
+		, 1,
+		ec);
+
+
+	c[0] = 0.0f; c[1] = 9000000.0f; c[2] = -1000.0f;
+	sc[0] = 0.5f; sc[1] = 0.2f; sc[2] = 0.2f;
+	ec[0] = 0; ec[1] = 0; ec[2] = 0;
+
+	spheres[3] = Sphere(c
+		, 10000000.0f
+		, sc
+		, 1
+		, 1,
+		ec);
+
+	checkCudaErrors(cudaMallocManaged((void**)&cudaSpheres, NUM_SPHERES * sizeof(Sphere), cudaMemAttachGlobal));
+	checkCudaErrors(cudaMemcpy(cudaSpheres, spheres, NUM_SPHERES * sizeof(Sphere), cudaMemcpyHostToDevice));
+
 	//stbi_uc* pixelData = (stbi_uc*)cudaDevVertptr;
 
 	//sinewave_gen_kernel << <grid, block, 0, streamToRun >> > (pixels, WIDTH,
@@ -1419,6 +1797,7 @@ class vulkanCudaApp {
 	  
 	  
 	  // Define the region to blit (we will blit the whole swapchain image)
+	  /*
 	  VkOffset3D blitSize;
 	  blitSize.x = WIDTH;
 	  blitSize.y = HEIGHT;
@@ -1430,9 +1809,7 @@ class vulkanCudaApp {
 	  imageBlitRegion.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 	  imageBlitRegion.dstSubresource.layerCount = 1;
 	  imageBlitRegion.dstOffsets[1] = blitSize;
-
-
-
+	  */
 
 	  //TODO: writing direct to stagingBuffer in drawFrame is not working
 	  //Perhaps export pixels to CUDA and write to that and use below to convert to vkimage?
@@ -1442,37 +1819,15 @@ class vulkanCudaApp {
 	  //memcpy(data, pixels, static_cast<size_t>(WIDTH*HEIGHT * 4 * sizeof(stbi_uc)));
 	  //vkUnmapMemory(device, stagingBufferMemory);
 
-	  transitionImageLayout(commandBuffer, textureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-	  //copyBufferToImage(stagingBuffer, textureImage, static_cast<uint32_t>(WIDTH), static_cast<uint32_t>(HEIGHT));
-	  
-	  VkBufferImageCopy region = {};
-	  region.bufferOffset = 0;
-	  region.bufferRowLength = 0;
-	  region.bufferImageHeight = 0;
-	  region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-	  region.imageSubresource.mipLevel = 0;
-	  region.imageSubresource.baseArrayLayer = 0;
-	  region.imageSubresource.layerCount = 1;
+	  transitionImageLayout(commandBuffer, dstImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+	  copyBufferToImage(commandBuffer, stagingBuffer, dstImage, static_cast<uint32_t>(WIDTH), static_cast<uint32_t>(HEIGHT));
+	  //copyBufferToImage(commandBuffer, stagingBuffer, dstImage, static_cast<uint32_t>(WIDTH), static_cast<uint32_t>(HEIGHT));
 
-	  region.imageOffset = { 0, 0, 0 };
-	  region.imageExtent = {
-		  WIDTH,
-		  HEIGHT,
-		  1
-	  };
-	  vkCmdCopyBufferToImage(
-		  commandBuffer,
-		  stagingBuffer,
-		  textureImage,
-		  VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-		  1,
-		  &region
-	  );
-	  
-	  transitionImageLayout(commandBuffer, textureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+	  transitionImageLayout(commandBuffer, dstImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
 	  // Issue the blit command
 	  
+	  /*
 	  vkCmdBlitImage(
 		  commandBuffer,
 		  textureImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
@@ -1480,7 +1835,7 @@ class vulkanCudaApp {
 		  1,
 		  &imageBlitRegion,
 		  VK_FILTER_NEAREST);
-		 
+		 */
 
 	  //WHAT THE FUCK IS HAPPENING
 	  /*
@@ -1683,12 +2038,10 @@ class vulkanCudaApp {
     
 	// Added sleep of 10 millisecs so that CPU does not submit too much work to
     // GPU
-    std::this_thread::sleep_for(std::chrono::microseconds(10000));
+    std::this_thread::sleep_for(std::chrono::microseconds(30000));
   }
 
-  void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height) {
-	  VkCommandBuffer commandBuffer = beginSingleTimeCommands();
-
+  void copyBufferToImage(VkCommandBuffer commandBuffer, VkBuffer buffer, VkImage image, uint32_t width, uint32_t height) {
 	  VkBufferImageCopy region = {};
 	  region.bufferOffset = 0;
 	  region.bufferRowLength = 0;
@@ -1712,6 +2065,12 @@ class vulkanCudaApp {
 		  1,
 		  &region
 	  );
+  }
+
+  void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height) {
+	  VkCommandBuffer commandBuffer = beginSingleTimeCommands();
+
+	  copyBufferToImage(commandBuffer, buffer, image, width, height);
 
 	  endSingleTimeCommands(commandBuffer);
   }
@@ -1847,7 +2206,7 @@ class vulkanCudaApp {
 			int texWidth, texHeight, texChannels;
 
 			pixels = stbi_load("texture.jpg", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
-
+			
 			if (!pixels) {
 				throw std::runtime_error("failed to load texture image!");
 			}
@@ -2225,9 +2584,27 @@ class vulkanCudaApp {
 
 	Texel* pixelData = (Texel*)cudaDevVertptr;
 
-    sinewave_gen_kernel<<<grid, block, 0, streamToRun>>>(pixelData, WIDTH,
-                                                         HEIGHT, AnimTime);
+	spheres[0].center[0] -= 10.0f;
+	spheres[0].center[1] -= 10.0f;
+	spheres[0].center[2] -= 10.0f;
 
+	//checkCudaErrors(cudaMallocManaged((void**)&cudaSpheres, NUM_SPHERES * sizeof(Sphere), cudaMemAttachGlobal));
+	
+	/*
+	checkCudaErrors(
+		cudaMemcpyAsync(
+			cudaSpheres
+			, spheres
+			, NUM_SPHERES * sizeof(Sphere)
+			, cudaMemcpyHostToDevice
+			, streamToRun
+		)
+	);
+	*/
+
+
+    sinewave_gen_kernel<<<grid, block, 0, streamToRun>>>(pixelData, (Sphere*)cudaSpheres, NUM_SPHERES, WIDTH,
+    HEIGHT, AnimTime);
 
 	//Signal CudaUpdateVk semaphore
     cudaVkSemaphoreSignal(cudaExtCudaUpdateVkVertexBufSemaphore);
@@ -2247,6 +2624,7 @@ class vulkanCudaApp {
         cudaDestroyExternalSemaphore(cudaExtVkUpdateCudaVertexBufSemaphore));
     vkDestroySemaphore(device, vkUpdateCudaVertexBufSemaphore, nullptr);
 
+	checkCudaErrors(cudaFree(cudaSpheres));
 
 	vkDestroyBuffer(device, stagingBuffer, nullptr);
 	vkFreeMemory(device, stagingBufferMemory, nullptr);
