@@ -72,7 +72,15 @@
 #define WIDTH 1024
 #define HEIGHT 1024
 
+ //NOTE: only support power-of-two DRSD values (for maximimising GPU utilisation)
+//#define DEFERRED_REFRESH_SQUARE_DIM 1
+//#define DEFERRED_REFRESH_SQUARE_DIM 2
+#define DEFERRED_REFRESH_SQUARE_DIM 4
+
+
+//Enable vulkan validation (prints Vulkan validation errors in the console window)
 #define VULKAN_VALIDATION 0
+//#define VULKAN_VALIDATION 1
 
 const std::vector<const char*> validationLayers = {
     "VK_LAYER_LUNARG_standard_validation"};
@@ -322,15 +330,19 @@ std::string execution_path;
 const int MAX_RAY_DEPTH = 3;
 
 __device__ void blendCol(Texel* col, float factor, float r, float g, float b) {
-	col->r = (col->r * (1.0f - factor)) + (factor * r);
+	//col->r = (col->r * (1.0f - factor)) + (factor * r);
 	col->g = (col->g  * (1.0f - factor)) + (factor * g);
-	col->b = (col->b * (1.0f - factor)) + (factor *  b);
+	//col->b = (col->b * (1.0f - factor)) + (factor *  b);
+	col->b = (col->r * (1.0f - factor)) + (factor * r);
+	col->r = (col->b * (1.0f - factor)) + (factor *  b);
 }
 
 __device__ void setCol(Texel* col, float r, float g, float b) {
-	col->r =  r;
+	//col->r =  r;
 	col->g =  g;
-	col->b =  b;
+	//col->b =  b;
+	col->b = r;
+	col->r = b;
 }
 
 template <int depth>
@@ -377,10 +389,10 @@ __device__ void Raytrace(Texel* col, float factor, Sphere* spheres, int numSpher
 	//no intersection = background
 	if (!sphere) {
 		//set background only on primary rays
-		if (depth == 1) setCol(col, 180, 180, 30);
-
+		if (depth == 1) setCol(col, 30, 80, 80);
+		else blendCol(col, factor, 30, 80, 80);
 		//Blending at depth > 1 is slow!!
-		//else blendCol(col, factor, 100, 100, 100);
+		//else blendCol(col, 0.1f, 30, 180, 180);
 		return;
 	}
 
@@ -500,6 +512,9 @@ __device__ void Raytrace(Texel* col, float factor, Sphere* spheres, int numSpher
 	}
 
 	if (sphere->transparency) {
+
+		//setCol(col, 255,255,255);
+
 		float ior = 1.009f;
 		
 		// are we inside or outside the surface?
@@ -523,8 +538,9 @@ __device__ void Raytrace(Texel* col, float factor, Sphere* spheres, int numSpher
 		refrdir[1] = refrdir[1] / refrMag;
 		refrdir[2] = refrdir[2] / refrMag;
 		
-		Raytrace<depth + 1>(col, sphere->transparency, spheres, numSpheres, refrdir[0], refrdir[1], refrdir[2],
-			shadowQueryPoint[0], shadowQueryPoint[1], shadowQueryPoint[2]);
+		//Raytrace<depth + 1>(col, sphere->transparency, spheres, numSpheres, refrdir[0], refrdir[1], refrdir[2],
+		//Raytrace<depth + 1>(col, k, spheres, numSpheres, refrdir[0], refrdir[1], refrdir[2], 
+		//	shadowQueryPoint[0], shadowQueryPoint[1], shadowQueryPoint[2]);
 	}
 }
 
@@ -534,18 +550,67 @@ __device__ void Raytrace<MAX_RAY_DEPTH>(Texel* col, float factor, Sphere* sphere
 	return;
 }
 
-__global__ void sinewave_gen_kernel(Texel* pixels, Sphere* spheres, int numSpheres, float cam_x, float cam_y, int frame, float factor) {
-	unsigned int x_int = (blockIdx.x * blockDim.x + threadIdx.x) * 2;
-	unsigned int y_int = (blockIdx.y * blockDim.y + threadIdx.y) * 2;
+__global__ void sinewave_gen_kernel(Texel* pixels, Sphere* spheres, int numSpheres, float cam_x, float cam_y, int frame, int squareDim, float factor) {
 	
-	//frame pattern
-	//nw, ne, sw, se
+	unsigned int x_int = (blockIdx.x * blockDim.x + threadIdx.x) * squareDim;
+	unsigned int y_int = (blockIdx.y * blockDim.y + threadIdx.y) * squareDim;
+	
+	//frame patterns:
+	/*
+		frame	x   y
+		1		0  0
+		2		1  0
+		3		0  1
+		4		1  1
+		----------------
+		5	    2  0
+		6		0  2
+		7	    2  2
+		8		1  2
+		9	    2  1
+		----------------
+	   10		3  0
+	   11       0  3  
+	   12       3  3
+	   13       3  2
+	   14       2  3
+	   15       1  3
+	   16       3  1
+	*/
+
+
+	//Use compile-time directive for less processing because this doesn't need to be switchable behaviour
+#if DEFERRED_REFRESH_SQUARE_DIM==2
 	if (frame == 2 || frame == 4) {
-		x_int = x_int + 1;
+		x_int += 1;
 	}
 	if (frame == 3 || frame == 4) {
-		y_int = y_int + 1;
+		y_int += 1;
 	}
+
+#elif DEFERRED_REFRESH_SQUARE_DIM==4
+
+	if (frame == 2 || frame == 4 || frame == 8 || frame == 15) {
+		x_int += 1;
+	}
+	else if (frame == 5 || frame == 7 || frame == 9 || frame == 14 ) {
+		x_int += 2;
+	}
+	else if (frame == 10 || frame == 12 || frame == 13 || frame == 16) {
+		x_int += 3;
+	}
+
+	if (frame == 3 || frame == 4 || frame == 9 || frame == 16) {
+		y_int += 1;
+	}
+	else if (frame == 6 || frame == 7 || frame == 8  || frame == 13) {
+		y_int += 2;
+	}
+	else if (frame == 11 || frame == 12 || frame == 14 || frame == 15) {
+		y_int += 3;
+	}
+#endif
+
 
 	int x = (x_int - (WIDTH/2));
 	int y = (y_int - (HEIGHT/2));
@@ -592,8 +657,12 @@ float speed = 0.1f;
 
 //render half the pixels in each dimension
 //TODO: hardcoded for a trail size=2
-int frameStep = 1;
-int TRAIL_SIZE = 2;
+
+//frameStep=0 forces full-frame rendering mode (disables sub-framing)
+int frameStep = (DEFERRED_REFRESH_SQUARE_DIM == 1) ? 0 : 1;
+//dimensions of refresh squares (square to get number of subframes)
+int defferedSquareDim = DEFERRED_REFRESH_SQUARE_DIM;
+
 float frameRefresh = 1.0f;
 float PERSISTENCE = 2.0f;
 
@@ -607,8 +676,6 @@ int oldTicks = 0;
 //platform-specific scancode, key action and modifier bits.
 void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
-	spheresChanged = false;
-
 	if (action == GLFW_RELEASE) {
 		switch (key) {
 		case (GLFW_KEY_R):
@@ -797,7 +864,6 @@ class vulkanCudaApp {
   void setupDebugCallback() {
     if (!enableValidationLayers) return;
 
-/*
 VkDebugReportCallbackCreateInfoEXT createInfo = {};
     createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT;
     createInfo.flags =
@@ -808,8 +874,9 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
                                      &callback) != VK_SUCCESS) {
       throw std::runtime_error("failed to set up debug callback!");
     }
-	*/
+	
   }
+
   void initWindow() {
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -1748,7 +1815,7 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
 
 	c[0] = -1000.0f; c[1] = -3500.0f; c[2] = -100.0f;
 	sc[0] = 1.0f; sc[1] = 1.0f; sc[2] = 1.0f;
-	ec[0] = 0.9f; ec[1] = 1.0f; ec[2] = 1.0f;
+	ec[0] = 0.5f; ec[1] = 1.0f; ec[2] = 1.0f;
 
 	spheres[2] = Sphere(c
 		, 500.0f
@@ -1759,13 +1826,13 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
 
 
 	//c[0] = 0.0f; c[1] = 9000000.0f; c[2] = -1000.0f;
-	c[0] = 2500.0f; c[1] = -2000.0f; c[2] = -5000.0f;
+	c[0] = -1500.0f; c[1] = -1000.0f; c[2] = -100.0f;
 	sc[0] = 0.5f; sc[1] = 0.2f; sc[2] = 0.2f;
 	ec[0] = 0; ec[1] = 0; ec[2] = 0;
 
 	spheres[3] = Sphere(c
 		//, 10000000.0f
-		, 1000.0f
+		, 500.0f
 		, sc
 		, 0.1f
 		, 0.4f
@@ -2737,10 +2804,10 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
 		);
 	}
 
-	//Run CUDA Kernel
+	//Render whole image
 	dim3 block(16, 16, 1);
-	dim3 grid(WIDTH / 32, HEIGHT / 32, 1);
-	
+	dim3 grid(WIDTH / (16 * DEFERRED_REFRESH_SQUARE_DIM), HEIGHT / (16 * DEFERRED_REFRESH_SQUARE_DIM), 1);
+		
     sinewave_gen_kernel<<<grid, block, 0, streamToRun>>>(
 		pixelData
 		, (Sphere*)cudaSpheres
@@ -2748,13 +2815,16 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
 		, cam_x
 		, cam_y
 		, frameStep
+		, DEFERRED_REFRESH_SQUARE_DIM
 		//TODO: this causes strobing ffs
 		//, (frameRefresh / PERSISTENCE) );
 		, 0.99f);
 	
 	//keep count of what sub-frame is being rendered
-	frameStep = ( (frameStep) < (TRAIL_SIZE*TRAIL_SIZE) ) ? frameStep + 1 : 1;
-	
+	if (frameStep != 0) {
+		frameStep = ((frameStep) < (DEFERRED_REFRESH_SQUARE_DIM*DEFERRED_REFRESH_SQUARE_DIM)) ? frameStep + 1 : 1;
+	}
+
 	//keep count of which frame we're on
 	if (frameStep == 1) {
 		frameRefresh = (frameRefresh < PERSISTENCE) ? frameRefresh + 1.0f : 1.0f;
