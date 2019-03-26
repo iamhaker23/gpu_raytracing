@@ -74,8 +74,8 @@
 
  //NOTE: only support power-of-two DRSD values (for maximimising GPU utilisation)
 //#define DEFERRED_REFRESH_SQUARE_DIM 1
-//#define DEFERRED_REFRESH_SQUARE_DIM 2
-#define DEFERRED_REFRESH_SQUARE_DIM 4
+#define DEFERRED_REFRESH_SQUARE_DIM 2
+//#define DEFERRED_REFRESH_SQUARE_DIM 4
 
 
 //Enable vulkan validation (prints Vulkan validation errors in the console window)
@@ -653,7 +653,7 @@ bool spheresChanged;
 float cam_x = 0.0f;
 float cam_y = 0.0f;
 
-float speed = 0.1f;
+float speed = 0.02f;
 
 //render half the pixels in each dimension
 //TODO: hardcoded for a trail size=2
@@ -662,9 +662,6 @@ float speed = 0.1f;
 int frameStep = (DEFERRED_REFRESH_SQUARE_DIM == 1) ? 0 : 1;
 //dimensions of refresh squares (square to get number of subframes)
 int defferedSquareDim = DEFERRED_REFRESH_SQUARE_DIM;
-
-float frameRefresh = 1.0f;
-float PERSISTENCE = 2.0f;
 
 bool keys[6] = { 0 };
 
@@ -1814,11 +1811,11 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
 		,ec);
 
 	c[0] = -1000.0f; c[1] = -3500.0f; c[2] = -100.0f;
-	sc[0] = 1.0f; sc[1] = 1.0f; sc[2] = 1.0f;
+	sc[0] = 0.5f; sc[1] = 1.0f; sc[2] = 1.0f;
 	ec[0] = 0.5f; ec[1] = 1.0f; ec[2] = 1.0f;
 
 	spheres[2] = Sphere(c
-		, 500.0f
+		, 50.0f
 		, sc
 		, 0
 		, 0
@@ -2805,8 +2802,8 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
 	}
 
 	//Render whole image
-	dim3 block(16, 16, 1);
-	dim3 grid(WIDTH / (16 * DEFERRED_REFRESH_SQUARE_DIM), HEIGHT / (16 * DEFERRED_REFRESH_SQUARE_DIM), 1);
+	dim3 block(32, 32, 1);
+	dim3 grid(WIDTH / (32 * DEFERRED_REFRESH_SQUARE_DIM), HEIGHT / (32 * DEFERRED_REFRESH_SQUARE_DIM), 1);
 		
     sinewave_gen_kernel<<<grid, block, 0, streamToRun>>>(
 		pixelData
@@ -2816,19 +2813,11 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
 		, cam_y
 		, frameStep
 		, DEFERRED_REFRESH_SQUARE_DIM
-		//TODO: this causes strobing ffs
-		//, (frameRefresh / PERSISTENCE) );
 		, 0.99f);
 	
 	//keep count of what sub-frame is being rendered
 	if (frameStep != 0) {
 		frameStep = ((frameStep) < (DEFERRED_REFRESH_SQUARE_DIM*DEFERRED_REFRESH_SQUARE_DIM)) ? frameStep + 1 : 1;
-	}
-
-	//keep count of which frame we're on
-	if (frameStep == 1) {
-		frameRefresh = (frameRefresh < PERSISTENCE) ? frameRefresh + 1.0f : 1.0f;
-		if (frameRefresh > PERSISTENCE) frameRefresh = PERSISTENCE;
 	}
 
 	//Signal CudaUpdateVk semaphore
