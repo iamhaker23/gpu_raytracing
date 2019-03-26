@@ -321,10 +321,16 @@ std::string execution_path;
 
 const int MAX_RAY_DEPTH = 3;
 
-__device__ void setCol(Texel* col, float factor, float r, float g, float b) {
+__device__ void blendCol(Texel* col, float factor, float r, float g, float b) {
 	col->r = (col->r * (1.0f - factor)) + (factor * r);
-	col->g = (col->g * (1.0f - factor)) + (factor * g);
-	col->b = (col->b * (1.0f - factor)) + (factor * b);
+	col->g = (col->g  * (1.0f - factor)) + (factor * g);
+	col->b = (col->b * (1.0f - factor)) + (factor *  b);
+}
+
+__device__ void setCol(Texel* col, float r, float g, float b) {
+	col->r =  r;
+	col->g =  g;
+	col->b =  b;
 }
 
 template <int depth>
@@ -370,12 +376,12 @@ __device__ void Raytrace(Texel* col, float factor, Sphere* spheres, int numSpher
 
 	//no intersection = background
 	if (!sphere) {
+		//set background only on primary rays
+		if (depth == 1) setCol(col, 180, 180, 30);
 
-		setCol(col, factor, 100, 100, 100);
+		//Blending at depth > 1 is slow!!
+		//else blendCol(col, factor, 100, 100, 100);
 		return;
-	}
-	else {
-		setCol(col, factor, 0, 0, 255);
 	}
 
 	//spheres are easy and fast because the normal is from centre-to-surface
@@ -403,53 +409,17 @@ __device__ void Raytrace(Texel* col, float factor, Sphere* spheres, int numSpher
 	// reverse the normal direction. That also means we are inside the sphere so set
 	// the inside bool to true. Finally reverse the sign of IdotN which we want
 	// positive.
-	//bool inside = true;
+	bool inside = true;
 
 	if (dot(nnhit, raydir) > 0) {
 		nnhit[0] = -nnhit[0];
 		nnhit[1] = -nnhit[1];
 		nnhit[2] = -nnhit[2];
-		//inside = false;
+		inside = false;
 	}
 
 	float bias = 1e-4; // add some bias to the point from which we will be tracing
-
-	/*
-	//REFLECTIONS
-
-	if ((sphere->transparency > 0 || sphere->reflection > 0) && depth < MAX_RAY_DEPTH) {
-		float facingratio = -raydir.dot(nhit);
-		// change the mix value to tweak the effect
-		float fresneleffect = mix(pow(1 - facingratio, 3), 1, 0.1);
-		// compute reflection direction (not need to normalize because all vectors
-		// are already normalized)
-		Vec3f refldir = raydir - nhit * 2 * raydir.dot(nhit);
-		refldir.normalize();
-		Vec3f reflection = 0;
-
-		if (sphere->reflection) {
-			reflection = trace(phit + nhit * bias, refldir, spheres, depth + 1);
-		}
-
-		Vec3f refraction = 0;
-		// if the sphere is also transparent compute refraction ray (transmission)
-		if (sphere->transparency) {
-			float ior = 1.01, eta = (inside) ? ior : 1 / ior; // are we inside or outside the surface?
-			float cosi = -nhit.dot(raydir);
-			float k = 1 - eta * eta * (1 - cosi * cosi);
-			Vec3f refrdir = (raydir * eta) + nhit * (eta *  cosi - (k));
-			refrdir.normalize();
-			refraction = trace(phit - nhit * bias, refrdir, spheres, depth + 1);
-		}
-		// the result is a mix of reflection and refraction (if the sphere is transparent)
-		surfaceColor = (
-			(reflection * fresneleffect) +
-			(refraction * (1 - fresneleffect) * sphere->transparency)
-			) * sphere->surfaceColor;
-	}
-	else {
-	*/
-
+	
 	//shadow query point is just outside sphere to avoid self-shadowing
 	vec3 shadowQueryPoint = { 0 };
 	shadowQueryPoint[0] = phit[0] + (nnhit[0] * FLT_MIN * 5.0f);
@@ -505,16 +475,14 @@ __device__ void Raytrace(Texel* col, float factor, Sphere* spheres, int numSpher
 		}
 
 	}
-
-	//TODO 25/03: WHY SHROWDED IN SHADOWS!?
-
-	setCol(col
+	
+	blendCol(col
 		,factor
 		, min(1.0f, lighting[0]) * 255
 		, min(1.0f, lighting[1]) * 255
 		, min(1.0f, lighting[2]) * 255);
+	
 
-	/*
 	vec3 refldir = { 0 };
 	float rayhitdot = dot(raydir, nnhit);
 	refldir[0] = raydir[0] - nnhit[0] * 2 * rayhitdot;
@@ -525,11 +493,39 @@ __device__ void Raytrace(Texel* col, float factor, Sphere* spheres, int numSpher
 	refldir[0] = refldir[0] / reflDirMag;
 	refldir[1] = refldir[1] / reflDirMag;
 	refldir[2] = refldir[2] / reflDirMag;
-
+	
 	if (sphere->reflection) {
-		Raytrace<depth + 1>(col, spheres, numSpheres, refldir[0], refldir[1], refldir[2],
-			phit[0], phit[1], phit[2] );
-	}*/
+		Raytrace<depth + 1>(col, sphere->reflection, spheres, numSpheres, refldir[0], refldir[1], refldir[2],
+			shadowQueryPoint[0], shadowQueryPoint[1], shadowQueryPoint[2] );
+	}
+
+	if (sphere->transparency) {
+		float ior = 1.009f;
+		
+		// are we inside or outside the surface?
+		float eta = (inside) ? ior : 1.0f / ior; 
+
+		vec3 nnhit2 = { 0 };
+		nnhit2[0] = -nnhit[0];
+		nnhit2[1] = -nnhit[1];
+		nnhit2[2] = -nnhit[2];
+
+		float cosi = dot(nnhit2, raydir);
+		float k = 1.0f - eta * eta * (1 - (cosi * cosi));
+
+		vec3 refrdir = { 0 };
+		refrdir[0] = (raydir[0] * eta) + (nnhit[0] * (eta * cosi - k));
+		refrdir[1] = (raydir[1] * eta) + (nnhit[1] * (eta * cosi - k));
+		refrdir[2] = (raydir[2] * eta) + (nnhit[2] * (eta * cosi - k));
+
+		float refrMag = magnitude(refrdir);
+		refrdir[0] = refrdir[0] / refrMag;
+		refrdir[1] = refrdir[1] / refrMag;
+		refrdir[2] = refrdir[2] / refrMag;
+		
+		Raytrace<depth + 1>(col, sphere->transparency, spheres, numSpheres, refrdir[0], refrdir[1], refrdir[2],
+			shadowQueryPoint[0], shadowQueryPoint[1], shadowQueryPoint[2]);
+	}
 }
 
 template<>
@@ -591,6 +587,8 @@ void* cudaSpheres;
 bool spheresChanged;
 float cam_x = 0.0f;
 float cam_y = 0.0f;
+
+float speed = 0.1f;
 
 //render half the pixels in each dimension
 //TODO: hardcoded for a trail size=2
@@ -1733,9 +1731,9 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
 	spheres[0] = Sphere(c
 		, 500.0f
 		, sc
-		, 1
-		, 1,
-		ec);
+		, 0.1f
+		, 0
+		,ec);
 
 	c[0] = 0.0f; c[1] = -2000.0f; c[2] = -5000.0f;
 	sc[0] = 0.2f; sc[1] = 0.2f; sc[2] = 0.2f;
@@ -1744,9 +1742,9 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
 	spheres[1] = Sphere(c
 		, 1000.0f
 		, sc
-		, 1
-		, 1,
-		ec);
+		, 0.1f
+		, 0
+		,ec);
 
 	c[0] = -1000.0f; c[1] = -3500.0f; c[2] = -100.0f;
 	sc[0] = 1.0f; sc[1] = 1.0f; sc[2] = 1.0f;
@@ -1755,21 +1753,23 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
 	spheres[2] = Sphere(c
 		, 500.0f
 		, sc
-		, 1
-		, 1,
-		ec);
+		, 0
+		, 0
+		,ec);
 
 
-	c[0] = 0.0f; c[1] = 9000000.0f; c[2] = -1000.0f;
+	//c[0] = 0.0f; c[1] = 9000000.0f; c[2] = -1000.0f;
+	c[0] = 2500.0f; c[1] = -2000.0f; c[2] = -5000.0f;
 	sc[0] = 0.5f; sc[1] = 0.2f; sc[2] = 0.2f;
 	ec[0] = 0; ec[1] = 0; ec[2] = 0;
 
 	spheres[3] = Sphere(c
-		, 10000000.0f
+		//, 10000000.0f
+		, 1000.0f
 		, sc
-		, 1
-		, 1,
-		ec);
+		, 0.1f
+		, 0.4f
+		,ec);
 
 	checkCudaErrors(cudaMallocManaged((void**)&cudaSpheres, NUM_SPHERES * sizeof(Sphere), cudaMemAttachGlobal));
 	checkCudaErrors(cudaMemcpy(cudaSpheres, spheres, NUM_SPHERES * sizeof(Sphere), cudaMemcpyHostToDevice));
@@ -2111,15 +2111,15 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
 
 
 	  if (keys[0] || keys[1]) {
-		  spheres[2].center[1] += (keys[0]) ? 0.1f : -0.1f;
+		  spheres[2].center[1] += (keys[0]) ? -speed : speed;
 		  spheresChanged = true;
 	  }
 	  if (keys[2] || keys[3]) {
-		  cam_x += (keys[2]) ? -0.1f : 0.1f;
+		  cam_x += (keys[2]) ? -speed : speed;
 	  }
 	  if (keys[4] || keys[5]){
-		  cam_y += (keys[4]) ? -0.1f : 0.1f;
-		}
+		  cam_y += (keys[4]) ? -speed : speed;
+	  }
 
 	  std::chrono::system_clock::time_point cNow = std::chrono::system_clock::now();
 
@@ -2128,7 +2128,7 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
 	  //std::ratio<1, 100> gives 50fps
 	  //std::ratio<1, 60> gives 30fps
 	  //std::ratio<1, 70> gives 35fps
-	  int ticks = (int)(std::chrono::duration<float, std::ratio<1, 100>>(cNow - WIN_CTIME).count());
+	  int ticks = (int)(std::chrono::duration<float, std::ratio<1, 120>>(cNow - WIN_CTIME).count());
 	 
 	  if (((ticks % 2 == 1) && ticks != oldTicks)) {
 		  WIN_CTIME = cNow;
@@ -2738,8 +2738,8 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
 	}
 
 	//Run CUDA Kernel
-	dim3 block(32, 32, 1);
-	dim3 grid(WIDTH / 64, HEIGHT / 64, 1);
+	dim3 block(16, 16, 1);
+	dim3 grid(WIDTH / 32, HEIGHT / 32, 1);
 	
     sinewave_gen_kernel<<<grid, block, 0, streamToRun>>>(
 		pixelData
@@ -2750,7 +2750,7 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
 		, frameStep
 		//TODO: this causes strobing ffs
 		//, (frameRefresh / PERSISTENCE) );
-		, 1.0f);
+		, 0.99f);
 	
 	//keep count of what sub-frame is being rendered
 	frameStep = ( (frameStep) < (TRAIL_SIZE*TRAIL_SIZE) ) ? frameStep + 1 : 1;
