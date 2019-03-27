@@ -74,8 +74,8 @@
 
  //NOTE: only support power-of-two DRSD values (for maximimising GPU utilisation)
 //#define DEFERRED_REFRESH_SQUARE_DIM 1
-#define DEFERRED_REFRESH_SQUARE_DIM 2
-//#define DEFERRED_REFRESH_SQUARE_DIM 4
+//#define DEFERRED_REFRESH_SQUARE_DIM 2
+#define DEFERRED_REFRESH_SQUARE_DIM 4
 
 
 //Enable vulkan validation (prints Vulkan validation errors in the console window)
@@ -327,14 +327,31 @@ std::string execution_path;
 
 ////START RAYTRACING
 
-const int MAX_RAY_DEPTH = 3;
+const int MAX_RAY_DEPTH = 4;
 
 __device__ void blendCol(Texel* col, float factor, float r, float g, float b) {
+
+	//normalise light ("HDR-like")
+	float largest = b;
+	if (r > g) {
+		if (r > b) {
+			largest = r;
+		}
+	}
+	else {
+		if (g > b) {
+			largest = g;
+		}
+	}
+
+	float lightOverspill = largest - 255;
+	if (lightOverspill < 0) lightOverspill = 0;
+
 	//col->r = (col->r * (1.0f - factor)) + (factor * r);
-	col->g = (col->g  * (1.0f - factor)) + (factor * g);
+	col->g = (col->g  * (1.0f - factor)) + (factor * (g- lightOverspill));
 	//col->b = (col->b * (1.0f - factor)) + (factor *  b);
-	col->b = (col->r * (1.0f - factor)) + (factor * r);
-	col->r = (col->b * (1.0f - factor)) + (factor *  b);
+	col->b = (col->r * (1.0f - factor)) + (factor * (r-lightOverspill));
+	col->r = (col->b * (1.0f - factor)) + (factor *  (b-lightOverspill));
 }
 
 __device__ void setCol(Texel* col, float r, float g, float b) {
@@ -389,10 +406,16 @@ __device__ void Raytrace(Texel* col, float factor, Sphere* spheres, int numSpher
 	//no intersection = background
 	if (!sphere) {
 		//set background only on primary rays
-		if (depth == 1) setCol(col, 30, 80, 80);
-		else blendCol(col, factor, 30, 80, 80);
-		//Blending at depth > 1 is slow!!
-		//else blendCol(col, 0.1f, 30, 180, 180);
+		
+		if (depth == 1) setCol(col, 30, 30, 80);
+		//NOTE: blend is slow!
+		else {
+			blendCol(col, factor, 30, 30, 80);
+		}
+		return;
+	}else if (sphere->emissionColor[0] > 0 || sphere->emissionColor[1] > 0 || sphere->emissionColor[2] > 0) {
+		//light sources emit their colour 100%
+		setCol(col, sphere->emissionColor[0]*255, sphere->emissionColor[1]*255, sphere->emissionColor[2]*255);
 		return;
 	}
 
@@ -416,35 +439,24 @@ __device__ void Raytrace(Texel* col, float factor, Sphere* spheres, int numSpher
 	nnhit[0] = nhit[0] / mag;
 	nnhit[1] = nhit[1] / mag;
 	nnhit[2] = nhit[2] / mag;
-
-	// If the normal and the view direction are not opposite to each other
-	// reverse the normal direction. That also means we are inside the sphere so set
-	// the inside bool to true. Finally reverse the sign of IdotN which we want
-	// positive.
-	bool inside = true;
-
-	if (dot(nnhit, raydir) > 0) {
-		nnhit[0] = -nnhit[0];
-		nnhit[1] = -nnhit[1];
-		nnhit[2] = -nnhit[2];
-		inside = false;
-	}
-
+	
 	float bias = 1e-4; // add some bias to the point from which we will be tracing
 	
 	//shadow query point is just outside sphere to avoid self-shadowing
 	vec3 shadowQueryPoint = { 0 };
-	shadowQueryPoint[0] = phit[0] + (nnhit[0] * FLT_MIN * 5.0f);
-	shadowQueryPoint[1] = phit[1] + (nnhit[1] * FLT_MIN * 5.0f);
-	shadowQueryPoint[2] = phit[2] + (nnhit[2] * FLT_MIN * 5.0f);
+	shadowQueryPoint[0] = phit[0] + (nnhit[0] * bias);
+	shadowQueryPoint[1] = phit[1] + (nnhit[1] * bias);
+	shadowQueryPoint[2] = phit[2] + (nnhit[2] * bias);
 	
 	vec3 lighting = { 0 };
+	float shadowMultiplier = 1.0f;
 
 	// it's a diffuse object, no need to raytrace any further
 	for (unsigned i = 0; i < numSpheres; ++i) {
-		if (spheres[i].emissionColor[0] > 0) {
+		if (spheres[i].emissionColor[0] > 0
+			|| spheres[i].emissionColor[1] > 0
+			|| spheres[i].emissionColor[2] > 0) {
 
-			float shadowMultiplier = 1.0f;
 			float m = 1.0f;
 
 			//if a light is being drawn, it will not be affected by shadows
@@ -456,7 +468,8 @@ __device__ void Raytrace(Texel* col, float factor, Sphere* spheres, int numSpher
 				lightDirection[1] = spheres[i].center[1] - phit[1];
 				lightDirection[2] = spheres[i].center[2] - phit[2];
 
-				float lMag = magnitude(lightDirection); // normalize normal direction
+				float lMag = magnitude(lightDirection); 
+				// normalize normal direction
 				vec3 nld = { 0 };
 				nld[0] = lightDirection[0] / lMag;
 				nld[1] = lightDirection[1] / lMag;
@@ -464,9 +477,8 @@ __device__ void Raytrace(Texel* col, float factor, Sphere* spheres, int numSpher
 
 				for (unsigned j = 0; j < numSpheres; j++) {
 					if (i != j && j != selfIndex) {
-						//criteria too sensitive - everything in shadow
 						if (hasIntersection(spheres[j], shadowQueryPoint, nld)) {
-							shadowMultiplier = 1000000.0f / (lMag * lMag);
+							shadowMultiplier = 0.01f;
 							break;
 						}
 					}
@@ -488,59 +500,138 @@ __device__ void Raytrace(Texel* col, float factor, Sphere* spheres, int numSpher
 
 	}
 	
-	blendCol(col
-		,factor
-		, min(1.0f, lighting[0]) * 255
-		, min(1.0f, lighting[1]) * 255
-		, min(1.0f, lighting[2]) * 255);
-	
+	//diffuse colour
+	blendCol(col ,factor/depth
+		//setCol(col
+		, lighting[0] * 255
+		, lighting[1] * 255
+		, lighting[2] * 255);
 
-	vec3 refldir = { 0 };
-	float rayhitdot = dot(raydir, nnhit);
-	refldir[0] = raydir[0] - nnhit[0] * 2 * rayhitdot;
-	refldir[1] = raydir[1] - nnhit[1] * 2 * rayhitdot;
-	refldir[2] = raydir[2] - nnhit[2] * 2 * rayhitdot;
+	//ray-traced transparency adds refraction colour
+	if (depth + 1 != MAX_RAY_DEPTH && 
+		(sphere->transparency || sphere->reflection)) {
 
-	float reflDirMag = magnitude(refldir);
-	refldir[0] = refldir[0] / reflDirMag;
-	refldir[1] = refldir[1] / reflDirMag;
-	refldir[2] = refldir[2] / reflDirMag;
-	
-	if (sphere->reflection) {
-		Raytrace<depth + 1>(col, sphere->reflection, spheres, numSpheres, refldir[0], refldir[1], refldir[2],
-			shadowQueryPoint[0], shadowQueryPoint[1], shadowQueryPoint[2] );
-	}
+		bool inside = true;
 
-	if (sphere->transparency) {
+		float cosi = dot(nnhit, raydir);
 
-		//setCol(col, 255,255,255);
+		//higher ior => smaller window
+		//float ior = 25.0f;
+		float ior = 1.001f;
+		//float ior = 1.5f;
+		float etai = 1;
+		float etat = ior;
 
-		float ior = 1.009f;
-		
-		// are we inside or outside the surface?
-		float eta = (inside) ? ior : 1.0f / ior; 
+		//TODO: bugfix transparency (erroneous combining?)
+		//TODO: rasterize for primary rays 
 
-		vec3 nnhit2 = { 0 };
-		nnhit2[0] = -nnhit[0];
-		nnhit2[1] = -nnhit[1];
-		nnhit2[2] = -nnhit[2];
 
-		float cosi = dot(nnhit2, raydir);
-		float k = 1.0f - eta * eta * (1 - (cosi * cosi));
+		if (cosi > 0) {
+			nnhit[0] = -nnhit[0];
+			nnhit[1] = -nnhit[1];
+			nnhit[2] = -nnhit[2];
+			inside = false;
+			etai = ior;
+			etat = 1;
+		}
+		else {
+			cosi *= -1;
+		}
 
-		vec3 refrdir = { 0 };
-		refrdir[0] = (raydir[0] * eta) + (nnhit[0] * (eta * cosi - k));
-		refrdir[1] = (raydir[1] * eta) + (nnhit[1] * (eta * cosi - k));
-		refrdir[2] = (raydir[2] * eta) + (nnhit[2] * (eta * cosi - k));
+		// compute fresnel
+		float kr = 0.0f;
 
-		float refrMag = magnitude(refrdir);
-		refrdir[0] = refrdir[0] / refrMag;
-		refrdir[1] = refrdir[1] / refrMag;
-		refrdir[2] = refrdir[2] / refrMag;
-		
-		//Raytrace<depth + 1>(col, sphere->transparency, spheres, numSpheres, refrdir[0], refrdir[1], refrdir[2],
-		//Raytrace<depth + 1>(col, k, spheres, numSpheres, refrdir[0], refrdir[1], refrdir[2], 
-		//	shadowQueryPoint[0], shadowQueryPoint[1], shadowQueryPoint[2]);
+		if (sphere->transparency){
+
+
+			// Compute sini using Snell's law
+			float sint = (etai / etat) * sqrtf(max(0.f, 1 - cosi * cosi));
+
+			// Total internal reflection
+			if (sint >= 1) {
+				kr = 1;
+			}
+			else {
+				float cost = sqrtf(max(0.f, 1 - sint * sint));
+				//float cosi2 = (cosi > 0) ? cosi : -cosi;
+				float Rs = ((etat * cosi) - (etai * cost)) / ((etat * cosi) + (etai * cost));
+				float Rp = ((etai * cosi) - (etat * cost)) / ((etai * cosi) + (etat * cost));
+				kr = (Rs * Rs + Rp * Rp) / 2;
+			}
+
+			// compute refraction if not total-internal-reflection
+			//if (kr < 1) {
+
+				float eta = etai / etat;
+				float k = 1 - eta * eta * (1 - cosi * cosi);
+
+				if (k > 0) {
+
+					vec3 refrdir = { 0 };
+					//float sqrtk = sqrtf(k);
+
+					refrdir[0] = (eta * raydir[0]) + (eta * (cosi - k)) * nnhit[0];
+					refrdir[1] = (eta * raydir[1]) + (eta * (cosi - k)) * nnhit[1];
+					refrdir[2] = (eta * raydir[2]) + (eta * (cosi - k)) * nnhit[2];
+
+					float refrMag = magnitude(refrdir);
+					refrdir[0] = refrdir[0] / refrMag;
+					refrdir[1] = refrdir[1] / refrMag;
+					refrdir[2] = refrdir[2] / refrMag;
+
+					
+					vec3 refrOrig = { 0 };
+					if (inside) {
+						refrOrig[0] = phit[0] - bias * nnhit[0];
+						refrOrig[1] = phit[1] - bias * nnhit[1];
+						refrOrig[2] = phit[2] - bias * nnhit[2];
+					}
+					else {
+						refrOrig[0] = phit[0] + bias * nnhit[0];
+						refrOrig[1] = phit[1] + bias * nnhit[1];
+						refrOrig[2] = phit[2] + bias * nnhit[2];
+					}
+
+					Raytrace<depth + 1>(col, 0.5f, spheres, numSpheres
+						, refrdir[0], refrdir[1], refrdir[2],
+						refrOrig[0], refrOrig[1], refrOrig[2]);
+				}
+			//}
+			//else {
+				//kr = 0.0f;
+			//}
+		}
+
+		if (sphere->reflection) {
+			vec3 reflOrig = { 0 };
+
+			if (inside) {
+				reflOrig[0] = phit[0] - bias * nnhit[0];
+				reflOrig[1] = phit[1] - bias * nnhit[1];
+				reflOrig[2] = phit[2] - bias * nnhit[2];
+			}
+			else {
+				reflOrig[0] = phit[0] + bias * nnhit[0];
+				reflOrig[1] = phit[1] + bias * nnhit[1];
+				reflOrig[2] = phit[2] + bias * nnhit[2];
+			}
+
+			vec3 refldir = { 0 };
+			float rayhitdot = dot(raydir, nnhit);
+			refldir[0] = raydir[0] - nnhit[0] * 2 * rayhitdot;
+			refldir[1] = raydir[1] - nnhit[1] * 2 * rayhitdot;
+			refldir[2] = raydir[2] - nnhit[2] * 2 * rayhitdot;
+
+			float reflDirMag = magnitude(refldir);
+			refldir[0] = refldir[0] / reflDirMag;
+			refldir[1] = refldir[1] / reflDirMag;
+			refldir[2] = refldir[2] / reflDirMag;
+
+			//Fresnel-blend the reflection
+			Raytrace<depth + 1>(col, (sphere->reflection - (kr*sphere->reflection)), spheres, numSpheres, refldir[0], refldir[1], refldir[2],
+				reflOrig[0], reflOrig[1], reflOrig[2]);
+		}
+
 	}
 }
 
@@ -550,7 +641,7 @@ __device__ void Raytrace<MAX_RAY_DEPTH>(Texel* col, float factor, Sphere* sphere
 	return;
 }
 
-__global__ void sinewave_gen_kernel(Texel* pixels, Sphere* spheres, int numSpheres, float cam_x, float cam_y, int frame, int squareDim, float factor) {
+__global__ void sinewave_gen_kernel(Texel* pixels, Sphere* spheres, int numSpheres, float cam_x, float cam_y, float cam_z, int frame, int squareDim, float factor) {
 	
 	unsigned int x_int = (blockIdx.x * blockDim.x + threadIdx.x) * squareDim;
 	unsigned int y_int = (blockIdx.y * blockDim.y + threadIdx.y) * squareDim;
@@ -636,9 +727,9 @@ __global__ void sinewave_gen_kernel(Texel* pixels, Sphere* spheres, int numSpher
 			//spheres
 			, spheres, numSpheres
 			//cam projection (smaller z = larger fov)
-			, x, y, -800
+			, x, y, -600
 			//cam pos
-			, cam_x + (WIDTH/-2.0f), cam_y + (HEIGHT/-2.0f), 5000);
+			, cam_x + (WIDTH/-2.0f), cam_y + (HEIGHT/-2.0f), cam_z+1000);
 	}
 }
 
@@ -652,6 +743,7 @@ void* cudaSpheres;
 bool spheresChanged;
 float cam_x = 0.0f;
 float cam_y = 0.0f;
+float cam_z = 0.0f;
 
 float speed = 0.02f;
 
@@ -663,7 +755,7 @@ int frameStep = (DEFERRED_REFRESH_SQUARE_DIM == 1) ? 0 : 1;
 //dimensions of refresh squares (square to get number of subframes)
 int defferedSquareDim = DEFERRED_REFRESH_SQUARE_DIM;
 
-bool keys[6] = { 0 };
+bool keys[10] = { 0 };
 
 std::chrono::system_clock::time_point WIN_CTIME = std::chrono::system_clock::now();
 int oldTicks = 0;
@@ -693,6 +785,18 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
 		case (GLFW_KEY_S):
 			keys[5] = false;
 			break;
+		case (GLFW_KEY_E):
+			keys[6] = false;
+			break;
+		case (GLFW_KEY_G):
+			keys[7] = false;
+			break;
+		case (GLFW_KEY_Q):
+			keys[8] = false;
+			break;
+		case (GLFW_KEY_Z):
+			keys[9] = false;
+			break;
 		default:
 			break;
 		}
@@ -716,6 +820,18 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
 			break;
 		case (GLFW_KEY_S):
 			keys[5] = true;
+			break;
+		case (GLFW_KEY_E):
+			keys[6] = true;
+			break;
+		case (GLFW_KEY_G):
+			keys[7] = true;
+			break;
+		case (GLFW_KEY_Q):
+			keys[8] = true;
+			break;
+		case (GLFW_KEY_Z):
+			keys[9] = true;
 			break;
 		default:
 			break;
@@ -1785,9 +1901,9 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
 
 
 	vec3 c, sc, ec;
-	c[0] = 0.0f; c[1] = 0.0f; c[2] = -1000.0f;
+	c[0] = 0.0f; c[1] = 0.0f; c[2] = -5000.0f;
 	
-	sc[0] = 0.5f; sc[1] = 0.5f; sc[2] = 0.5f;
+	sc[0] = 1.0f; sc[1] = 0.1f; sc[2] = 0.1f;
 	ec[0] = 0; ec[1] = 0; ec[2] = 0;
 
 	spheres = (Sphere*)malloc(NUM_SPHERES * sizeof(Sphere));
@@ -1795,24 +1911,24 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
 	spheres[0] = Sphere(c
 		, 500.0f
 		, sc
-		, 0.1f
-		, 0
+		, 0.5f
+		, 0.5f
 		,ec);
 
-	c[0] = 0.0f; c[1] = -2000.0f; c[2] = -5000.0f;
-	sc[0] = 0.2f; sc[1] = 0.2f; sc[2] = 0.2f;
+	c[0] = 0.0f; c[1] = 0.0f; c[2] = -3000.0f;
+	sc[0] = 0.1f; sc[1] = 1.0f; sc[2] = 0.1f;
 	ec[0] = 0; ec[1] = 0; ec[2] = 0;
 
 	spheres[1] = Sphere(c
-		, 1000.0f
+		, 400.0f
 		, sc
-		, 0.1f
 		, 0
+		, 1
 		,ec);
 
-	c[0] = -1000.0f; c[1] = -3500.0f; c[2] = -100.0f;
+	c[0] = 0.0f; c[1] = 0.0f; c[2] = -250.0f;
 	sc[0] = 0.5f; sc[1] = 1.0f; sc[2] = 1.0f;
-	ec[0] = 0.5f; ec[1] = 1.0f; ec[2] = 1.0f;
+	ec[0] = 1.0f; ec[1] = 1.0f; ec[2] = 1.0f;
 
 	spheres[2] = Sphere(c
 		, 50.0f
@@ -1821,18 +1937,17 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
 		, 0
 		,ec);
 
-
 	//c[0] = 0.0f; c[1] = 9000000.0f; c[2] = -1000.0f;
-	c[0] = -1500.0f; c[1] = -1000.0f; c[2] = -100.0f;
-	sc[0] = 0.5f; sc[1] = 0.2f; sc[2] = 0.2f;
+	c[0] = 0.0f; c[1] = 0.0f; c[2] = -20.0f;
+	sc[0] = 0.1f; sc[1] = 0.1f; sc[2] = 1.0f;
 	ec[0] = 0; ec[1] = 0; ec[2] = 0;
 
 	spheres[3] = Sphere(c
 		//, 10000000.0f
-		, 500.0f
+		, 200.0f
 		, sc
-		, 0.1f
-		, 0.4f
+		, 0
+		, 1
 		,ec);
 
 	checkCudaErrors(cudaMallocManaged((void**)&cudaSpheres, NUM_SPHERES * sizeof(Sphere), cudaMemAttachGlobal));
@@ -2178,11 +2293,18 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
 		  spheres[2].center[1] += (keys[0]) ? -speed : speed;
 		  spheresChanged = true;
 	  }
+	  if (keys[6] || keys[7]) {
+		  spheres[2].center[2] += (keys[6]) ? -speed : speed;
+		  spheresChanged = true;
+	  }
 	  if (keys[2] || keys[3]) {
 		  cam_x += (keys[2]) ? -speed : speed;
 	  }
-	  if (keys[4] || keys[5]){
+	  if (keys[4] || keys[5]) {
 		  cam_y += (keys[4]) ? -speed : speed;
+	  }
+	  if (keys[8] || keys[9]) {
+		  cam_z += (keys[8]) ? -speed : speed;
 	  }
 
 	  std::chrono::system_clock::time_point cNow = std::chrono::system_clock::now();
@@ -2192,7 +2314,7 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
 	  //std::ratio<1, 100> gives 50fps
 	  //std::ratio<1, 60> gives 30fps
 	  //std::ratio<1, 70> gives 35fps
-	  int ticks = (int)(std::chrono::duration<float, std::ratio<1, 120>>(cNow - WIN_CTIME).count());
+	  int ticks = (int)(std::chrono::duration<float, std::ratio<1, 200>>(cNow - WIN_CTIME).count());
 	 
 	  if (((ticks % 2 == 1) && ticks != oldTicks)) {
 		  WIN_CTIME = cNow;
@@ -2802,8 +2924,8 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
 	}
 
 	//Render whole image
-	dim3 block(32, 32, 1);
-	dim3 grid(WIDTH / (32 * DEFERRED_REFRESH_SQUARE_DIM), HEIGHT / (32 * DEFERRED_REFRESH_SQUARE_DIM), 1);
+	dim3 block(16, 16, 1);
+	dim3 grid(WIDTH / (16 * DEFERRED_REFRESH_SQUARE_DIM), HEIGHT / (16 * DEFERRED_REFRESH_SQUARE_DIM), 1);
 		
     sinewave_gen_kernel<<<grid, block, 0, streamToRun>>>(
 		pixelData
@@ -2811,6 +2933,7 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
 		, NUM_SPHERES
 		, cam_x
 		, cam_y
+		, cam_z
 		, frameStep
 		, DEFERRED_REFRESH_SQUARE_DIM
 		, 0.99f);
