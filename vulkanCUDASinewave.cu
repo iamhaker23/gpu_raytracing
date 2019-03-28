@@ -217,13 +217,16 @@ struct Sphere
 	float radius, radius2;                  /// sphere radius and radius^2
 	vec3 surfaceColor, emissionColor;      /// surface color and emission (light)
 	float transparency, reflection;         /// surface transparency and reflectivity
+	bool castShadows;
 	Sphere(
 		const vec3 &c,
 		const float &r,
 		const vec3 &sc,
 		const float &refl,
 		const float &transp,
-		const vec3 &ec) {
+		const vec3 &ec,
+		const bool &shadows
+		) {
 
 		center[0] = c[0];
 		center[1] = c[1];
@@ -236,6 +239,8 @@ struct Sphere
 		emissionColor[0] = ec[0];
 		emissionColor[1] = ec[1];
 		emissionColor[2] = ec[2];
+
+		castShadows = shadows;
 
 		transparency = transp;
 		reflection = refl;
@@ -277,17 +282,21 @@ __device__ float intersect(Sphere sphere, vec3 &rayorig, vec3 &raydir)
 	return tmp1;
 }
 
-__device__ float hasIntersection(Sphere sphere, vec3 &rayorig, vec3 &raydir)
+__device__ float hasIntersection(Sphere sphere, vec3 &rayorig, vec3 &raydir, float maxDist)
 {
 	vec3 l = { 0 };
 	l[0] = sphere.center[0] - rayorig[0];
 	l[1] = sphere.center[1] - rayorig[1];
 	l[2] = sphere.center[2] - rayorig[2];
 
+	//Shadow-caster is on the other side of the light, no shadow.
+	if (magnitude(l) - sphere.radius > maxDist) return false;
+
 	float tca = dot(l, raydir);
 	if (tca < 0) return false;
 	float d2 = dot(l, l) - tca * tca;
 	if (d2 > sphere.radius2) return false;
+
 	return true;
 }
 
@@ -327,6 +336,7 @@ std::string execution_path;
 
 ////START RAYTRACING
 
+//const int MAX_RAY_DEPTH = 3;
 const int MAX_RAY_DEPTH = 4;
 
 __device__ void blendCol(Texel* col, float factor, float r, float g, float b) {
@@ -363,7 +373,14 @@ __device__ void setCol(Texel* col, float r, float g, float b) {
 }
 
 template <int depth>
-__device__ void Raytrace(Texel* col, float factor, Sphere* spheres, int numSpheres, float ray_x, float ray_y, float ray_z, float orig_x, float orig_y, float orig_z)
+__device__ void Raytrace(Texel* col
+	, float factor
+	, Sphere* spheres
+	, int numSpheres
+	, float ray_x, float ray_y, float ray_z
+	, float orig_x, float orig_y, float orig_z
+	, int bouncedFromSphereIndex
+	, float blendR, float blendG, float blendB)
 {
 	//set colours by screen position
 	//setCol(col, ray_x, ray_y, ray_x / ray_y);
@@ -393,14 +410,16 @@ __device__ void Raytrace(Texel* col, float factor, Sphere* spheres, int numSpher
 	int selfIndex = -1;
 	// find intersection of this ray with the sphere in the scene
 	for (unsigned i = 0; i < numSpheres; ++i) {
-		float t = intersect(spheres[i], rayorig, raydir);
-		if (t != -1.0f) {
-			if (t < tnear) {
-				tnear = t;
-				sphere = &spheres[i];
-				selfIndex = i;
+		//if (i != bouncedFromSphereIndex) {
+			float t = intersect(spheres[i], rayorig, raydir);
+			if (t != -1.0f) {
+				if (t < tnear) {
+					tnear = t;
+					sphere = &spheres[i];
+					selfIndex = i;
+				}
 			}
-		}
+		//}
 	}
 
 	//no intersection = background
@@ -410,7 +429,7 @@ __device__ void Raytrace(Texel* col, float factor, Sphere* spheres, int numSpher
 		if (depth == 1) setCol(col, 30, 30, 80);
 		//NOTE: blend is slow!
 		else {
-			blendCol(col, factor, 30, 30, 80);
+			blendCol(col, factor, 30*blendR, 30 * blendG, 80 * blendB);
 		}
 		return;
 	}else if (sphere->emissionColor[0] > 0 || sphere->emissionColor[1] > 0 || sphere->emissionColor[2] > 0) {
@@ -421,11 +440,27 @@ __device__ void Raytrace(Texel* col, float factor, Sphere* spheres, int numSpher
 
 	//spheres are easy and fast because the normal is from centre-to-surface
 	//and the hit point it the point on the closest intersection of radius and raydir
-
 	vec3 phit = { 0 };
 	phit[0] = orig_x + (raydir[0] * tnear);
 	phit[1] = orig_y + (raydir[1] * tnear);
 	phit[2] = orig_z + (raydir[2] * tnear);
+
+	//teleport self-refracted ray
+	
+	if (selfIndex == bouncedFromSphereIndex) {
+
+		Raytrace<depth + 1>(col
+			, factor
+			, spheres
+			, numSpheres
+			, ray_x, ray_y, ray_z
+			, phit[0], phit[1], phit[2]
+			, bouncedFromSphereIndex,
+			blendR, blendG, blendB);
+		return;
+	}
+	
+
 	
 	//Get normal at hit (and normalize it)
 	vec3 nhit;
@@ -433,14 +468,26 @@ __device__ void Raytrace(Texel* col, float factor, Sphere* spheres, int numSpher
 	nhit[1] = phit[1] - sphere->center[1];
 	nhit[2] = phit[2] - sphere->center[2];
 
-	//super fast normalisation, yeah boi
+
 	float mag = magnitude(nhit);
 	vec3 nnhit = { 0 };
 	nnhit[0] = nhit[0] / mag;
 	nnhit[1] = nhit[1] / mag;
 	nnhit[2] = nhit[2] / mag;
-	
-	float bias = 1e-4; // add some bias to the point from which we will be tracing
+
+	bool inside = true;
+
+	float rayhitdot = dot(raydir, nnhit);
+
+	if (rayhitdot > 0) {
+		inside = false;
+	}
+
+	nnhit[0] = ((inside) ? 1 : -1) * nnhit[0];
+	nnhit[1] = ((inside) ? 1 : -1) * nnhit[1];
+	nnhit[2] = ((inside) ? 1 : -1) * nnhit[2];
+
+	float bias = sphere->radius*5e-3; // add some bias to the point from which we will be tracing
 	
 	//shadow query point is just outside sphere to avoid self-shadowing
 	vec3 shadowQueryPoint = { 0 };
@@ -449,18 +496,20 @@ __device__ void Raytrace(Texel* col, float factor, Sphere* spheres, int numSpher
 	shadowQueryPoint[2] = phit[2] + (nnhit[2] * bias);
 	
 	vec3 lighting = { 0 };
-	float shadowMultiplier = 1.0f;
+	float shadowMultiplier = 1.0f / NUM_LIGHTS;
 
 	// it's a diffuse object, no need to raytrace any further
 	for (unsigned i = 0; i < numSpheres; ++i) {
-		if (spheres[i].emissionColor[0] > 0
+		//Light SHOULDN'T be the bouncedFrom sphere, but just in case
+		if ((bouncedFromSphereIndex == -1 || i != bouncedFromSphereIndex)
+			&&
+			( spheres[i].emissionColor[0] > 0
 			|| spheres[i].emissionColor[1] > 0
-			|| spheres[i].emissionColor[2] > 0) {
+			|| spheres[i].emissionColor[2] > 0)) {
 
 			float m = 1.0f;
 
-			//if a light is being drawn, it will not be affected by shadows
-			//otherwise, we have a diffuse object so calculate shadows
+			//do not allow direct self-lighting
 			if (i != selfIndex) {
 				// this is a light
 				vec3 lightDirection = { 0 };
@@ -476,8 +525,10 @@ __device__ void Raytrace(Texel* col, float factor, Sphere* spheres, int numSpher
 				nld[2] = lightDirection[2] / lMag;
 
 				for (unsigned j = 0; j < numSpheres; j++) {
-					if (i != j && j != selfIndex) {
-						if (hasIntersection(spheres[j], shadowQueryPoint, nld)) {
+					if (spheres[j].castShadows
+						&& i != j && j != selfIndex) {
+						if (hasIntersection(spheres[j], shadowQueryPoint, nld, lMag)) {
+							
 							shadowMultiplier = 0.01f;
 							break;
 						}
@@ -486,7 +537,9 @@ __device__ void Raytrace(Texel* col, float factor, Sphere* spheres, int numSpher
 
 				//m does not change per pixel of object
 				m = dot(nnhit, nld);
-				m = max(0.0f, m);
+				if (sphere->transparency) {
+					m = (m < 0) ? -m : max(0.0f, m);
+				}
 
 			}
 
@@ -496,131 +549,98 @@ __device__ void Raytrace(Texel* col, float factor, Sphere* spheres, int numSpher
 				m * spheres[i].emissionColor[1]);
 			lighting[2] += (sphere->surfaceColor[2] * shadowMultiplier *
 				m * spheres[i].emissionColor[2]);
+
+			shadowMultiplier = 1.0f / NUM_LIGHTS;
 		}
 
 	}
-	
-	//diffuse colour
-	blendCol(col ,factor/depth
-		//setCol(col
-		, lighting[0] * 255
-		, lighting[1] * 255
-		, lighting[2] * 255);
+
+	//diffuse colour at hit point
+	blendCol(col, factor
+		, blendR * (lighting[0]) * 255
+		, blendG * (lighting[1]) * 255
+		, blendB * (lighting[2]) * 255);
 
 	//ray-traced transparency adds refraction colour
-	if (depth + 1 != MAX_RAY_DEPTH && 
+	//if the surface is lit
+	if (//depth + 1 != MAX_RAY_DEPTH && 
+		((lighting[0] +lighting[1]+ lighting[2])*(blendR+ blendG+ blendB) > 0)
+		&&
 		(sphere->transparency || sphere->reflection)) {
 
-		bool inside = true;
+		vec3 negraydir = { 0 };
+		negraydir[0] = -raydir[0];
+		negraydir[1] = -raydir[1];
+		negraydir[2] = -raydir[2];
 
-		float cosi = dot(nnhit, raydir);
+		//default: 50% reflection
+		//other: transp+refl -> fresnel is computed
+		float fresneleffect = 0.5f;
 
-		//higher ior => smaller window
-		//float ior = 25.0f;
-		float ior = 1.001f;
-		//float ior = 1.5f;
-		float etai = 1;
-		float etat = ior;
+		float ior = 1.01f;
+		float eta = (inside) ? ior : 1 / ior;
 
-		//TODO: bugfix transparency (erroneous combining?)
-		//TODO: rasterize for primary rays 
-
-
-		if (cosi > 0) {
-			nnhit[0] = -nnhit[0];
-			nnhit[1] = -nnhit[1];
-			nnhit[2] = -nnhit[2];
-			inside = false;
-			etai = ior;
-			etat = 1;
-		}
-		else {
-			cosi *= -1;
-		}
-
-		// compute fresnel
-		float kr = 0.0f;
+		vec3 nnnhit = { 0 };
+		nnnhit[0] = -nnhit[0];
+		nnnhit[1] = -nnhit[1];
+		nnnhit[2] = -nnhit[2];
 
 		if (sphere->transparency){
 
 
-			// Compute sini using Snell's law
-			float sint = (etai / etat) * sqrtf(max(0.f, 1 - cosi * cosi));
+			float facingratio = dot(nnhit, negraydir);
+			fresneleffect = ((1 - facingratio) * (1 - facingratio)*(0.9f)) + 0.1;
 
-			// Total internal reflection
-			if (sint >= 1) {
-				kr = 1;
+			float cosi = dot(nnnhit, raydir);
+			float k = 1 - (eta * eta * (1 - cosi * cosi));
+
+			vec3 refrdir = { 0 };
+
+			//TODO: negraydir is interesting but is it correct? was raydir
+
+			refrdir[0] = (eta * negraydir[0]) + ((eta * (cosi - k)) * nnhit[0]);
+			refrdir[1] = (eta * negraydir[1]) + ((eta * (cosi - k)) * nnhit[1]);
+			refrdir[2] = (eta * negraydir[2]) + ((eta * (cosi - k)) * nnhit[2]);
+
+			//normalise (and invert y)
+			float refrMag = magnitude(refrdir);
+			refrdir[0] = refrdir[0] / refrMag;
+			refrdir[1] = refrdir[1] / refrMag;
+			refrdir[2] = refrdir[2] / refrMag;
+
+			vec3 refrOrig = { 0 };
+			refrOrig[0] = phit[0] + (bias * nnnhit[0]);
+			refrOrig[1] = phit[1] + (bias * nnnhit[1]);
+			refrOrig[2] = phit[2] + (bias * nnnhit[2]);
+
+			float refrFact = 0.5f*shadowMultiplier*sphere->transparency;
+			if (refrFact > 0) {
+				Raytrace<depth + 1>(col, refrFact, spheres, numSpheres
+					, refrdir[0], refrdir[1], refrdir[2]
+					,refrOrig[0], refrOrig[1], refrOrig[2]
+					, selfIndex
+					, blendR*lighting[0], blendG*lighting[1], blendB*lighting[2]);
 			}
-			else {
-				float cost = sqrtf(max(0.f, 1 - sint * sint));
-				//float cosi2 = (cosi > 0) ? cosi : -cosi;
-				float Rs = ((etat * cosi) - (etai * cost)) / ((etat * cosi) + (etai * cost));
-				float Rp = ((etai * cosi) - (etat * cost)) / ((etai * cosi) + (etat * cost));
-				kr = (Rs * Rs + Rp * Rp) / 2;
-			}
-
-			// compute refraction if not total-internal-reflection
-			//if (kr < 1) {
-
-				float eta = etai / etat;
-				float k = 1 - eta * eta * (1 - cosi * cosi);
-
-				if (k > 0) {
-
-					vec3 refrdir = { 0 };
-					//float sqrtk = sqrtf(k);
-
-					refrdir[0] = (eta * raydir[0]) + (eta * (cosi - k)) * nnhit[0];
-					refrdir[1] = (eta * raydir[1]) + (eta * (cosi - k)) * nnhit[1];
-					refrdir[2] = (eta * raydir[2]) + (eta * (cosi - k)) * nnhit[2];
-
-					float refrMag = magnitude(refrdir);
-					refrdir[0] = refrdir[0] / refrMag;
-					refrdir[1] = refrdir[1] / refrMag;
-					refrdir[2] = refrdir[2] / refrMag;
-
-					
-					vec3 refrOrig = { 0 };
-					if (inside) {
-						refrOrig[0] = phit[0] - bias * nnhit[0];
-						refrOrig[1] = phit[1] - bias * nnhit[1];
-						refrOrig[2] = phit[2] - bias * nnhit[2];
-					}
-					else {
-						refrOrig[0] = phit[0] + bias * nnhit[0];
-						refrOrig[1] = phit[1] + bias * nnhit[1];
-						refrOrig[2] = phit[2] + bias * nnhit[2];
-					}
-
-					Raytrace<depth + 1>(col, 0.5f, spheres, numSpheres
-						, refrdir[0], refrdir[1], refrdir[2],
-						refrOrig[0], refrOrig[1], refrOrig[2]);
-				}
-			//}
-			//else {
-				//kr = 0.0f;
-			//}
 		}
 
 		if (sphere->reflection) {
 			vec3 reflOrig = { 0 };
 
 			if (inside) {
-				reflOrig[0] = phit[0] - bias * nnhit[0];
-				reflOrig[1] = phit[1] - bias * nnhit[1];
-				reflOrig[2] = phit[2] - bias * nnhit[2];
+				reflOrig[0] = phit[0] - (bias * nnhit[0]);
+				reflOrig[1] = phit[1] - (bias * nnhit[1]);
+				reflOrig[2] = phit[2] - (bias * nnhit[2]);
 			}
 			else {
-				reflOrig[0] = phit[0] + bias * nnhit[0];
-				reflOrig[1] = phit[1] + bias * nnhit[1];
-				reflOrig[2] = phit[2] + bias * nnhit[2];
+				reflOrig[0] = phit[0] + (bias * nnhit[0]);
+				reflOrig[1] = phit[1] + (bias * nnhit[1]);
+				reflOrig[2] = phit[2] + (bias * nnhit[2]);
 			}
 
 			vec3 refldir = { 0 };
-			float rayhitdot = dot(raydir, nnhit);
-			refldir[0] = raydir[0] - nnhit[0] * 2 * rayhitdot;
-			refldir[1] = raydir[1] - nnhit[1] * 2 * rayhitdot;
-			refldir[2] = raydir[2] - nnhit[2] * 2 * rayhitdot;
+			refldir[0] = raydir[0] - (nnhit[0] * 2 * rayhitdot);
+			refldir[1] = raydir[1] - (nnhit[1] * 2 * rayhitdot);
+			refldir[2] = raydir[2] - (nnhit[2] * 2 * rayhitdot);
 
 			float reflDirMag = magnitude(refldir);
 			refldir[0] = refldir[0] / reflDirMag;
@@ -628,18 +648,38 @@ __device__ void Raytrace(Texel* col, float factor, Sphere* spheres, int numSpher
 			refldir[2] = refldir[2] / reflDirMag;
 
 			//Fresnel-blend the reflection
-			Raytrace<depth + 1>(col, (sphere->reflection - (kr*sphere->reflection)), spheres, numSpheres, refldir[0], refldir[1], refldir[2],
-				reflOrig[0], reflOrig[1], reflOrig[2]);
+			float reflFact = max(0.0f, shadowMultiplier*(0.5f - (0.5f*fresneleffect*sphere->reflection)));
+			if (reflFact > 0) {
+				Raytrace<depth + 1>(col, reflFact, spheres, numSpheres
+					, refldir[0], refldir[1], refldir[2]
+					, reflOrig[0], reflOrig[1], reflOrig[2]
+					, selfIndex
+					, blendR*lighting[0], blendG*lighting[1], blendB*lighting[2]);
+			}
 		}
 
 	}
 }
 
-template<>
-__device__ void Raytrace<MAX_RAY_DEPTH>(Texel* col, float factor, Sphere* spheres, int numSpheres, float ray_x, float ray_y, float ray_z, float origin_x, float origin_y, float origin_z)
+
+template <>
+__device__ void Raytrace<MAX_RAY_DEPTH>(Texel* col
+	, float factor
+	, Sphere* spheres
+	, int numSpheres
+	, float ray_x, float ray_y, float ray_z
+	, float orig_x, float orig_y, float orig_z
+	, int bouncedFromSphereIndex
+	, float blendR, float blendG, float blendB)
 {
+
+	//set pixel to red to visualise max_depth rays
+	//setCol(col, 255, 0, 0);
+	setCol(col, col->r*factor, col->g*factor, col->b*factor);
+
 	return;
 }
+
 
 __global__ void sinewave_gen_kernel(Texel* pixels, Sphere* spheres, int numSpheres, float cam_x, float cam_y, float cam_z, int frame, int squareDim, float factor) {
 	
@@ -729,7 +769,9 @@ __global__ void sinewave_gen_kernel(Texel* pixels, Sphere* spheres, int numSpher
 			//cam projection (smaller z = larger fov)
 			, x, y, -600
 			//cam pos
-			, cam_x + (WIDTH/-2.0f), cam_y + (HEIGHT/-2.0f), cam_z+1000);
+			, cam_x + (WIDTH/-2.0f), cam_y + (HEIGHT/-2.0f), cam_z+1000,
+			-1
+			,1.0f, 1.0f, 1.0f);
 	}
 }
 
@@ -737,7 +779,9 @@ __global__ void sinewave_gen_kernel(Texel* pixels, Sphere* spheres, int numSpher
 
 //Global to program
 Sphere* spheres;
-const int NUM_SPHERES = 4;
+const int NUM_SPHERES = 6;
+const int NUM_LIGHTS = 2;
+
 void* cudaSpheres;
 //Player State
 bool spheresChanged;
@@ -1901,54 +1945,86 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
 
 
 	vec3 c, sc, ec;
-	c[0] = 0.0f; c[1] = 0.0f; c[2] = -5000.0f;
+	c[0] = -400.0f; c[1] = 0.0f; c[2] = -6500.0f;
 	
 	sc[0] = 1.0f; sc[1] = 0.1f; sc[2] = 0.1f;
 	ec[0] = 0; ec[1] = 0; ec[2] = 0;
 
 	spheres = (Sphere*)malloc(NUM_SPHERES * sizeof(Sphere));
 
+	//TODO: try 5 spheres in a line horizontally
+	//TODO: refraction should be flipped
+
 	spheres[0] = Sphere(c
 		, 500.0f
 		, sc
-		, 0.5f
-		, 0.5f
-		,ec);
+		, 0
+		, 0
+		,ec
+		,true);
 
-	c[0] = 0.0f; c[1] = 0.0f; c[2] = -3000.0f;
-	sc[0] = 0.1f; sc[1] = 1.0f; sc[2] = 0.1f;
-	ec[0] = 0; ec[1] = 0; ec[2] = 0;
+	//c[0] = 0.0f; c[1] = 0.0f; c[2] = -3000.0f;
+	c[0] = -1000.0f; c[1] = 0.0f; c[2] = -5000.0f;
+	ec[0] = 0.6f; ec[1] = 1.0f; ec[2] = 0.6f;
 
 	spheres[1] = Sphere(c
-		, 400.0f
-		, sc
+		, 20.0f
+		, ec
 		, 0
-		, 1
-		,ec);
+		, 0
+		,ec
+		, false);
 
 	c[0] = 0.0f; c[1] = 0.0f; c[2] = -250.0f;
-	sc[0] = 0.5f; sc[1] = 1.0f; sc[2] = 1.0f;
-	ec[0] = 1.0f; ec[1] = 1.0f; ec[2] = 1.0f;
+	ec[0] = 1; ec[1] = 1; ec[2] = 1;
 
 	spheres[2] = Sphere(c
-		, 50.0f
-		, sc
+		, 16.0f
+		, ec
 		, 0
 		, 0
-		,ec);
+		,ec
+		, false);
 
 	//c[0] = 0.0f; c[1] = 9000000.0f; c[2] = -1000.0f;
-	c[0] = 0.0f; c[1] = 0.0f; c[2] = -20.0f;
+	//sc[0] = 1.0f; sc[1] = 1.0f; sc[2] = 1.0f;
+	//c[0] = 0.0f; c[1] = 0.0f; c[2] = -20.0f;
+	c[0] = 800.0f; c[1] = 0.0f; c[2] = -5000.0f;
 	sc[0] = 0.1f; sc[1] = 0.1f; sc[2] = 1.0f;
 	ec[0] = 0; ec[1] = 0; ec[2] = 0;
 
 	spheres[3] = Sphere(c
-		//, 10000000.0f
 		, 200.0f
 		, sc
+		, 0.1f
 		, 0
+		,ec
+		, true);
+
+	c[0] = -2500.0f; c[1] = 0.0f; c[2] = -5000.0f;
+	sc[0] = 0.5f; sc[1] = 0.6f; sc[2] = 1.0f;
+	ec[0] = 0; ec[1] = 0; ec[2] = 0;
+
+	spheres[4] = Sphere(c
+		, 400.0f
+		, sc
 		, 1
-		,ec);
+		, 1
+		, ec
+		, true);
+
+
+	c[0] = 0.0f; c[1] = 9000000.0f; c[2] = -1000.0f;
+	sc[0] = 0.1f; sc[1] = 0.1f; sc[2] = 0.1f;
+	ec[0] = 0; ec[1] = 0; ec[2] = 0;
+
+	spheres[5] = Sphere(c
+		, 10000000.0f
+		, sc
+		, 0
+		, 0
+		, ec
+		, false);
 
 	checkCudaErrors(cudaMallocManaged((void**)&cudaSpheres, NUM_SPHERES * sizeof(Sphere), cudaMemAttachGlobal));
 	checkCudaErrors(cudaMemcpy(cudaSpheres, spheres, NUM_SPHERES * sizeof(Sphere), cudaMemcpyHostToDevice));
@@ -2041,12 +2117,13 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
       renderPassInfo.pClearValues = &clearColor;
 
 	  vkCmdBeginRenderPass(commandBuffers[i], &renderPassInfo,
-		  VK_SUBPASS_CONTENTS_INLINE);
-	  /*
-      vkCmdBeginRenderPass(commandBuffers[i], &renderPassInfo,
-                           VK_SUBPASS_CONTENTS_INLINE);
+		 VK_SUBPASS_CONTENTS_INLINE);
+	  
 
-
+	  //TODO:
+	  //Vulkan render triangles
+	  //async copy triangles to gpu (like spheres list)
+	  //raytrace triangles
 
       vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS,
                         graphicsPipeline);
@@ -2059,15 +2136,9 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
       
 	  vkCmdDraw(commandBuffers[i], static_cast<uint32_t>(vertexBufSize), 1, 0,
                 0);
-				
-	  
-				
-				
-	  
 
-      vkCmdEndRenderPass(commandBuffers[i]);
-	  */
-	  doBlit(commandBuffers[i], swapChainImages[i]);
+	  
+	  //doBlit(commandBuffers[i], swapChainImages[i]);
 	  vkCmdEndRenderPass(commandBuffers[i]);
 
       if (vkEndCommandBuffer(commandBuffers[i]) != VK_SUCCESS) {
