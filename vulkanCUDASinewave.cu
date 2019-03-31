@@ -71,6 +71,7 @@
 
 #define WIDTH 1024
 #define HEIGHT 1024
+#define SHAPE_MODE 0
 
  //NOTE: only support power-of-two DRSD values (for maximimising GPU utilisation)
 //#define DEFERRED_REFRESH_SQUARE_DIM 1
@@ -331,13 +332,54 @@ struct Vertex {
   }
 };
 
+__device__ void mult(mat4x4 a, vec3 &vec) {
+	
+	//|a b c d|
+	//|e f g h|
+	//|i j k l|
+	//|m n o p|
+	//*
+	// x y z w
+	// =
+	//ax+by+cz+dw
+	//ex+fy+gz+hw
+	//ix+jy+kz+lw
+	//mx+ny+oz+pw
+
+	//NOTE: takes Row Major Matrices
+	vec4 newVec = { 0 };
+	newVec[0] = vec[0] * a[0][0] +
+		vec[1] * a[0][1] +
+		vec[2] * a[0][2] +
+		vec[3] * a[0][3];
+	newVec[1] = vec[0] * a[1][0] +
+		vec[1] * a[1][1] +
+		vec[2] * a[1][2] +
+		vec[3] * a[1][3];
+	newVec[2] = vec[0] * a[2][0] +
+		vec[1] * a[2][1] +
+		vec[2] * a[2][2] +
+		vec[3] * a[2][3];
+	newVec[3] = vec[0] * a[3][0] +
+		vec[1] * a[3][1] +
+		vec[2] * a[3][2] +
+		vec[3] * a[3][3];
+
+	//Homogenous to non-homogenous
+	vec[0] = newVec[0] / newVec[3];
+	vec[1] = newVec[1] / newVec[3];
+	vec[2] = newVec[2] / newVec[3];
+}
+
 size_t mesh_width = 0, mesh_height = 0;
 std::string execution_path;
 
 ////START RAYTRACING
 
-//const int MAX_RAY_DEPTH = 3;
-const int MAX_RAY_DEPTH = 4;
+const int MAX_RAY_DEPTH = 2;
+//const int MAX_RAY_DEPTH = 4;
+
+
 
 __device__ void blendCol(Texel* col, float factor, float r, float g, float b) {
 
@@ -371,6 +413,139 @@ __device__ void setCol(Texel* col, float r, float g, float b) {
 	col->b = r;
 	col->r = b;
 }
+
+#if SHAPE_MODE==0
+
+template<int depth>
+__device__ void RaytraceTris(Texel* col
+	, float factor
+	, Vertex* verts
+	, int numTris
+	, float ray_x, float ray_y, float ray_z
+	, float orig_x, float orig_y, float orig_z
+	, int bouncedFromSphereIndex
+	, float blendR, float blendG, float blendB)
+{
+
+	col->r = 0.0f;
+	col->g = 0.0f;
+	col->b = 0.0f;
+
+	//TODO: ensure the tri hit is the closest to the ray origin
+	for (int tri = 0; tri < numTris; tri++) {
+
+		vec3 sspA = { 0 };
+		vec3 sspB = { 0 };
+		vec3 sspC = { 0 };
+
+		sspA[0] = verts[tri + 0].pos[0] - orig_x;
+		sspA[1] = verts[tri + 0].pos[1] - orig_y;
+		sspA[2] = verts[tri + 0].pos[2] - orig_z;
+
+		sspB[0] = verts[tri + 1].pos[0] - orig_x;
+		sspB[1] = verts[tri + 1].pos[1] - orig_y;
+		sspB[2] = verts[tri + 1].pos[2] - orig_z;
+
+		sspC[0] = verts[tri + 2].pos[0] - orig_x;
+		sspC[1] = verts[tri + 2].pos[1] - orig_y;
+		sspC[2] = verts[tri + 2].pos[2] - orig_z;
+
+		//TODO: apply orthographic projection according to ray direction
+		//mat4 orth = mat4(1);
+		//AND THEN ->
+		//vec2 sspA = (pA*orth).xy;
+
+		//Orthographic projection matrix
+		//f=far, n=near, l=left, r=right, t=top, b=bottom
+		//|(2.0f/(r-l)	, 0				, 0				, -1.0f*((right+left)/(right-left))
+		//|(0			, 2.0f/(t-b)	, 0				, -1.0f*((top+bottom)/(top-bottom))
+		//|(0			, 0				, 2.0f/(f-n)	, -1.0f*((far+near)/(far-near))
+		//|(0			, 0				, 0				, 1
+		mat4x4 orth = { 0 };
+		
+		//e.g. 512, 512, -600
+
+		float f = orig_z + ray_z;
+		float n = orig_z - ray_z;
+
+		float t = 0;
+		float b = (orig_y + ray_y);
+
+		float l = 0;
+		float r = (orig_x + ray_x);
+
+		orth[0][0] = 2.0f / (r - l);
+		orth[0][3] = -1.0f*((r + l) / (r - l));
+
+		orth[1][1] = 2.0f / (t - b);
+		orth[1][3] = -1.0f*((t + b) / (t - b));
+
+		orth[2][2] = 2.0f / (f - n);
+		orth[2][3] = -1.0f*((f + n) / (f - n));
+		
+		orth[3][3] = 1;
+
+		mult(orth, sspA);
+		mult(orth, sspB);
+		mult(orth, sspC);
+
+		//TODO: orthographic projection of triangle according to viewing ray
+		//Before onleft tests (for filling)
+		//0, 0, -600 at centre of screen...
+		vec3 raydir = { 0 };
+		raydir[0] = ray_x/orig_z;
+		raydir[1] = ray_y/orig_z;
+		//mult(orth, raydir);
+
+		//parallelogram mat. det. magic ->
+		//Shortcut to calculate the signed area
+		//(x2-x1)(y3-y2)-(x3-x2)(y2-y1)
+		float sgnArea = 0.5f*
+			((sspB[0] - sspA[0])*(raydir[1] - sspB[1])
+				- (raydir[0] - sspB[0])*(sspB[1] - sspA[1]));
+
+		if (sgnArea > 0.0f) {
+
+			sgnArea = 0.5f*((sspC[0] - sspB[0])*(raydir[1] - sspC[1])
+				- (raydir[0] - sspC[0])*(sspC[1] - sspB[1]));
+
+			if (sgnArea > 0.0f) {
+
+				sgnArea = 0.5f*((sspA[0] - sspC[0])*(raydir[1] - sspA[1])
+					- (raydir[0] - sspA[0])*(sspA[1] - sspC[1]));
+
+				if (sgnArea > 0.0f) {
+
+
+					//TODO: interpolate UV/col between vertex and hit position
+					//and average values
+					col->r = 255;
+					col->g = 255;
+					col->b = 255;
+
+				}
+
+			}
+		}
+	}
+
+	return;
+}
+
+template<>
+__device__ void RaytraceTris<MAX_RAY_DEPTH>(Texel* col
+	, float factor
+	, Vertex* verts
+	, int numTris
+	, float ray_x, float ray_y, float ray_z
+	, float orig_x, float orig_y, float orig_z
+	, int bouncedFromSphereIndex
+	, float blendR, float blendG, float blendB)
+{
+	return;
+}
+
+#elif SHAPE_MODE==1
 
 template <int depth>
 __device__ void Raytrace(Texel* col
@@ -680,12 +855,27 @@ __device__ void Raytrace<MAX_RAY_DEPTH>(Texel* col
 	return;
 }
 
+#endif
 
-__global__ void sinewave_gen_kernel(Texel* pixels, Sphere* spheres, int numSpheres, float cam_x, float cam_y, float cam_z, int frame, int squareDim, float factor) {
+/* Deal with verts in CUDA??
+__global__ void update_vertex_data(Vertex* verts, int numTris) {
+
+
+	unsigned int x_int = (blockIdx.x * blockDim.x + threadIdx.x) * 3;
+	unsigned int y_int = (blockIdx.y * blockDim.y + threadIdx.y) * 3;
+
+	if (x_int < numTris * 3 && ) {
+		verts[] 
+	}
+
+}
+*/
+
+__global__ void get_raytraced_pixels(Texel* pixels, Vertex* verts, int numTris, Sphere* spheres, int numSpheres, float cam_x, float cam_y, float cam_z, int frame, int squareDim, float factor) {
 	
 	unsigned int x_int = (blockIdx.x * blockDim.x + threadIdx.x) * squareDim;
 	unsigned int y_int = (blockIdx.y * blockDim.y + threadIdx.y) * squareDim;
-	
+
 	//frame patterns:
 	/*
 		frame	x   y
@@ -708,7 +898,6 @@ __global__ void sinewave_gen_kernel(Texel* pixels, Sphere* spheres, int numSpher
 	   15       1  3
 	   16       3  1
 	*/
-
 
 	//Use compile-time directive for less processing because this doesn't need to be switchable behaviour
 #if DEFERRED_REFRESH_SQUARE_DIM==2
@@ -746,19 +935,9 @@ __global__ void sinewave_gen_kernel(Texel* pixels, Sphere* spheres, int numSpher
 	int x = (x_int - (WIDTH/2));
 	int y = (y_int - (HEIGHT/2));
 	
-	//float x = (x_int) / width;
-	//float y = (y_int) / height;
-
-	//float w = 255 * (sinf(time) * 0.5f + 0.5f);// *cosf(freq + time) * 0.5f;
-
-	/*
-	for (int i = 0; i < numSpheres; i++) {
-		spheres[i].radius -= 100.0f;
-	}
-	*/
-	
 	if (x_int < WIDTH && y_int < HEIGHT) {
-
+		
+		/*
 		Raytrace<1>(
 			//image
 			&pixels[y_int * WIDTH + x_int]
@@ -772,7 +951,25 @@ __global__ void sinewave_gen_kernel(Texel* pixels, Sphere* spheres, int numSpher
 			, cam_x + (WIDTH/-2.0f), cam_y + (HEIGHT/-2.0f), cam_z+1000,
 			-1
 			,1.0f, 1.0f, 1.0f);
+			*/
+
+		RaytraceTris<1>(
+			//image
+			&pixels[y_int * WIDTH + x_int]
+			//factor to keep old color
+			, factor
+			//verts
+			, verts, numTris
+			//cam projection (smaller z = larger fov)
+			, x, y, -600
+			//cam pos
+			, cam_x + (WIDTH / -2.0f), cam_y + (HEIGHT / -2.0f), cam_z + 1000,
+			-1
+			, 1.0f, 1.0f, 1.0f
+			);
+		
 	}
+
 }
 
 ////END RAYTRACING
@@ -783,6 +980,8 @@ const int NUM_SPHERES = 6;
 const int NUM_LIGHTS = 2;
 
 void* cudaSpheres;
+void* cudaVerts;
+Vertex* vertData;
 //Player State
 bool spheresChanged;
 float cam_x = 0.0f;
@@ -918,8 +1117,6 @@ class vulkanCudaApp {
   VkPipeline graphicsPipeline;
   std::vector<VkFramebuffer> swapChainFramebuffers;
   VkCommandPool commandPool;
-  VkBuffer vertexBuffer;
-  VkDeviceMemory vertexBufferMemory;
   VkBuffer uniformBuffer;
   VkDeviceMemory uniformBufferMemory;
   std::vector<VkCommandBuffer> commandBuffers;
@@ -954,9 +1151,10 @@ class vulkanCudaApp {
   PFN_vkGetPhysicalDeviceProperties2 fpGetPhysicalDeviceProperties2;
 
   // CUDA stuff
-  cudaExternalMemory_t cudaExtMemVertexBuffer;
+  cudaExternalMemory_t cudaExtMemPixelBuffer;
   cudaExternalSemaphore_t cudaExtCudaUpdateVkVertexBufSemaphore;
   cudaExternalSemaphore_t cudaExtVkUpdateCudaVertexBufSemaphore;
+  void* cudaDevPixelptr = NULL;
   void* cudaDevVertptr = NULL;
   cudaStream_t streamToRun;
 
@@ -1140,7 +1338,6 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
 	//Added textures
 	createTextureImage();
 
-    createVertexBuffer();
     createUniformBuffer();
     createDescriptorPool();
     createDescriptorSet();
@@ -1911,37 +2108,12 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
     vkBindBufferMemory(device, buffer, bufferMemory, 0);
   }
 
-  void createVertexBuffer() {
-    mesh_width = swapChainExtent.width / 2;
-    mesh_height = swapChainExtent.height / 2;
-    vertexBufSize = mesh_height * mesh_width;
-
-    VkDeviceSize bufferSize = sizeof(Vertex) * vertexBufSize;
-#ifdef _WIN64
-    if (IsWindows8OrGreater()) {
-      createBufferExtMem(bufferSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                         VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT,
-                         vertexBuffer, vertexBufferMemory);
-    } else {
-      createBufferExtMem(bufferSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                         VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_KMT_BIT,
-                         vertexBuffer, vertexBufferMemory);
-    }
-#else
-    createBufferExtMem(bufferSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                       VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
-                       vertexBuffer, vertexBufferMemory);
-#endif
-  }
 
   void cudaInitVertexMem() {
     checkCudaErrors(cudaStreamCreate(&streamToRun));
 
-    dim3 block(16, 16, 1);
-    dim3 grid(WIDTH / 16, HEIGHT / 16, 1);
+    //dim3 block(16, 16, 1);
+    //dim3 grid(WIDTH / 16, HEIGHT / 16, 1);
 
 
 	vec3 c, sc, ec;
@@ -2029,10 +2201,44 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
 	checkCudaErrors(cudaMallocManaged((void**)&cudaSpheres, NUM_SPHERES * sizeof(Sphere), cudaMemAttachGlobal));
 	checkCudaErrors(cudaMemcpy(cudaSpheres, spheres, NUM_SPHERES * sizeof(Sphere), cudaMemcpyHostToDevice));
 
-	//stbi_uc* pixelData = (stbi_uc*)cudaDevVertptr;
 
-	//sinewave_gen_kernel << <grid, block, 0, streamToRun >> > (pixels, WIDTH,
-	//	HEIGHT, 1.0);
+	vertData = (Vertex*)malloc(3 * sizeof(Vertex));
+
+	vertData[0] = Vertex();
+
+	vertData[0].pos[0] = 512.0f;
+	vertData[0].pos[1] = 512.0f;
+	vertData[0].pos[2] = -100.0f;
+	vertData[0].pos[3] = 1.0f;
+
+	vertData[0].color[0] = 1.0f;
+	vertData[0].color[1] = 1.0f;
+	vertData[0].color[2] = 1.0f;
+
+	vertData[1] = Vertex();
+
+	vertData[1].pos[0] = -512.0f;
+	vertData[1].pos[1] = -512.0f;
+	vertData[1].pos[2] = -100.0f;
+	vertData[1].pos[3] = 1.0f;
+
+	vertData[1].color[0] = 1.0f;
+	vertData[1].color[1] = 1.0f;
+	vertData[1].color[2] = 1.0f;
+
+	vertData[2] = Vertex();
+
+	vertData[2].pos[0] = 512.0f;
+	vertData[2].pos[1] = -512.0f;
+	vertData[2].pos[2] = -100.0f;
+	vertData[2].pos[3] = 1.0f;
+
+	vertData[2].color[0] = 1.0f;
+	vertData[2].color[1] = 1.0f;
+	vertData[2].color[2] = 1.0f;
+
+	checkCudaErrors(cudaMallocManaged((void**)&cudaVerts, 3 * sizeof(Vertex), cudaMemAttachGlobal));
+	checkCudaErrors(cudaMemcpy(cudaVerts, vertData, 3 * sizeof(Vertex), cudaMemcpyHostToDevice));
 
     checkCudaErrors(cudaStreamSynchronize(streamToRun));
   }
@@ -2112,33 +2318,15 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
       renderPassInfo.renderArea.offset = {0, 0};
       renderPassInfo.renderArea.extent = swapChainExtent;
 
-      VkClearValue clearColor = {0.5f, 0.1f, 0.1f, 1.0f};
+      VkClearValue clearColor = {0.0f, 0.0f, 0.0f, 1.0f};
       renderPassInfo.clearValueCount = 1;
       renderPassInfo.pClearValues = &clearColor;
 
 	  vkCmdBeginRenderPass(commandBuffers[i], &renderPassInfo,
 		 VK_SUBPASS_CONTENTS_INLINE);
-	  
 
-	  //TODO:
-	  //Vulkan render triangles
-	  //async copy triangles to gpu (like spheres list)
-	  //raytrace triangles
+	  doBlit(commandBuffers[i], swapChainImages[i]);
 
-      vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                        graphicsPipeline);
-      VkBuffer vertexBuffers[] = {vertexBuffer};
-      VkDeviceSize offsets[] = {0};
-      vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, vertexBuffers, offsets);
-      vkCmdBindDescriptorSets(commandBuffers[i],
-                              VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout,
-                              0, 1, &descriptorSet, 0, nullptr);
-      
-	  vkCmdDraw(commandBuffers[i], static_cast<uint32_t>(vertexBufSize), 1, 0,
-                0);
-
-	  
-	  //doBlit(commandBuffers[i], swapChainImages[i]);
 	  vkCmdEndRenderPass(commandBuffers[i]);
 
       if (vkEndCommandBuffer(commandBuffers[i]) != VK_SUCCESS) {
@@ -2777,9 +2965,10 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
   void cudaVkImportVertexMem() {
 
 	//Description for the import of the VK VertexBuffer as a CUDA object
-
     cudaExternalMemoryHandleDesc cudaExtMemHandleDesc;
     memset(&cudaExtMemHandleDesc, 0, sizeof(cudaExtMemHandleDesc));
+
+	//Import spheres
 #ifdef _WIN64
     cudaExtMemHandleDesc.type =
         IsWindows8OrGreater() ? cudaExternalMemoryHandleTypeOpaqueWin32
@@ -2787,35 +2976,36 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
     cudaExtMemHandleDesc.handle.win32.handle = getVkMemHandle(
         IsWindows8OrGreater()
             ? VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT
-            : VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_KMT_BIT);
+            : VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_KMT_BIT
+		,stagingBufferMemory);
 #else
     cudaExtMemHandleDesc.type = cudaExternalMemoryHandleTypeOpaqueFd;
     cudaExtMemHandleDesc.handle.fd =
-        getVkMemHandle(VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT);
+        getVkMemHandle(VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT
+			, stagingBufferMemory);
 #endif
-    cudaExtMemHandleDesc.size = 4 * sizeof(stbi_uc) * WIDTH * HEIGHT;
 
-	//External Memory Object = VkBuffer vertexBuffer
-	//Import "External Memory Object" into CUDA
-    checkCudaErrors(cudaImportExternalMemory(&cudaExtMemVertexBuffer,
-                                             &cudaExtMemHandleDesc));
+	cudaExtMemHandleDesc.size = 4 * sizeof(stbi_uc) * WIDTH * HEIGHT;
+
+	checkCudaErrors(cudaImportExternalMemory(&cudaExtMemPixelBuffer,
+		&cudaExtMemHandleDesc));
+
+	cudaExternalMemoryBufferDesc cudaExtBufferDesc;
+	cudaExtBufferDesc.offset = 0;
 	
-    cudaExternalMemoryBufferDesc cudaExtBufferDesc;
-    cudaExtBufferDesc.offset = 0;
-
 	//TODO: fix hack assumes texture.jpg is same dimensions as width/height
 	cudaExtBufferDesc.size = 4 * sizeof(stbi_uc) * WIDTH * HEIGHT;
-    
+	
 	cudaExtBufferDesc.flags = 0;
-
+	
 	//TODO: replace with "CUDA import VK Image"
 	//See: https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__EXTRES__INTEROP.html
-	//Maps a buffer onto the "external memory object"  
-    checkCudaErrors(cudaExternalMemoryGetMappedBuffer(
-        &cudaDevVertptr, cudaExtMemVertexBuffer, &cudaExtBufferDesc));
-    printf("CUDA Imported Vulkan vertex buffer\n");
-  }
+	//Maps a buffer onto the "external memory object"
+	checkCudaErrors(cudaExternalMemoryGetMappedBuffer(
+		&cudaDevPixelptr, cudaExtMemPixelBuffer, &cudaExtBufferDesc));
 
+    printf("CUDA Imported Vulkan pixel buffer\n");
+  }
 
   //Get access to the Vulkan Semaphore in CUDA
   void cudaVkImportSemaphore() {
@@ -2868,14 +3058,15 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
 
 #ifdef _WIN64  // For windows
   HANDLE getVkMemHandle(
-      VkExternalMemoryHandleTypeFlagsKHR externalMemoryHandleType) {
+      VkExternalMemoryHandleTypeFlagsKHR externalMemoryHandleType
+  , VkDeviceMemory &bufferToGetHandle) {
     HANDLE handle;
 
     VkMemoryGetWin32HandleInfoKHR vkMemoryGetWin32HandleInfoKHR = {};
     vkMemoryGetWin32HandleInfoKHR.sType =
         VK_STRUCTURE_TYPE_MEMORY_GET_WIN32_HANDLE_INFO_KHR;
     vkMemoryGetWin32HandleInfoKHR.pNext = NULL;
-    vkMemoryGetWin32HandleInfoKHR.memory = stagingBufferMemory;
+    vkMemoryGetWin32HandleInfoKHR.memory = bufferToGetHandle;
     vkMemoryGetWin32HandleInfoKHR.handleType =
         (VkExternalMemoryHandleTypeFlagBitsKHR)externalMemoryHandleType;
 
@@ -2976,9 +3167,8 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
 	//Signalled by submitVulkan() and submitVulkanCuda()
     cudaVkSemaphoreWait(cudaExtVkUpdateCudaVertexBufSemaphore);
 
-	//stbi_uc* pixelData = (stbi_uc*)cudaDevVertptr;
-
-	Texel* pixelData = (Texel*)cudaDevVertptr;
+	//CUDA output into Vulkan
+	Texel* pixelData = (Texel*)cudaDevPixelptr;
 	
 	//checkCudaErrors(cudaMallocManaged((void**)&cudaSpheres, NUM_SPHERES * sizeof(Sphere), cudaMemAttachGlobal));
 	if (spheresChanged) {
@@ -2994,12 +3184,16 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
 		);
 	}
 
+
+
 	//Render whole image
 	dim3 block(16, 16, 1);
 	dim3 grid(WIDTH / (16 * DEFERRED_REFRESH_SQUARE_DIM), HEIGHT / (16 * DEFERRED_REFRESH_SQUARE_DIM), 1);
 		
-    sinewave_gen_kernel<<<grid, block, 0, streamToRun>>>(
+    get_raytraced_pixels<<<grid, block, 0, streamToRun>>>(
 		pixelData
+		,(Vertex*)cudaVerts
+		, 1
 		, (Sphere*)cudaSpheres
 		, NUM_SPHERES
 		, cam_x
@@ -3057,9 +3251,7 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
     vkDestroyRenderPass(device, renderPass, nullptr);
     vkDestroySwapchainKHR(device, swapChain, nullptr);
 
-    checkCudaErrors(cudaDestroyExternalMemory(cudaExtMemVertexBuffer));
-    vkDestroyBuffer(device, vertexBuffer, nullptr);
-    vkFreeMemory(device, vertexBufferMemory, nullptr);
+	checkCudaErrors(cudaDestroyExternalMemory(cudaExtMemPixelBuffer));
     vkDestroyDescriptorPool(device, descriptorPool, nullptr);
     vkDestroyDevice(device, nullptr);
     vkDestroySurfaceKHR(instance, surface, nullptr);
