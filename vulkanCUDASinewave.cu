@@ -424,7 +424,8 @@ __device__ void RaytraceTris(Texel* col
 	, float ray_x, float ray_y, float ray_z
 	, float orig_x, float orig_y, float orig_z
 	, int bouncedFromSphereIndex
-	, float blendR, float blendG, float blendB)
+	, float blendR, float blendG, float blendB
+	, mat4x4 &persp)
 {
 
 	col->r = 0.0f;
@@ -432,7 +433,7 @@ __device__ void RaytraceTris(Texel* col
 	col->b = 0.0f;
 
 	//TODO: ensure the tri hit is the closest to the ray origin
-	for (int tri = 0; tri < numTris; tri++) {
+	for (int tri = 0; tri < numTris*3; tri+=3) {
 
 		vec3 sspA = { 0 };
 		vec3 sspB = { 0 };
@@ -465,14 +466,23 @@ __device__ void RaytraceTris(Texel* col
 		
 		//e.g. 512, 512, -600
 
-		float f = orig_z + ray_z;
-		float n = orig_z - ray_z;
+		//float f = orig_z + ray_z;
+		//float n = orig_z;
+
+		//float t = orig_y - ray_y;
+		//float b = (orig_y + ray_y);
+
+		//float l = orig_x - ray_x;
+		//float r = (orig_x + ray_x);
+
+		float n = 0;
+		float f = 1.0f;
 
 		float t = 0;
-		float b = (orig_y + ray_y);
+		float b = 1.0f;
 
 		float l = 0;
-		float r = (orig_x + ray_x);
+		float r = 1.0f;
 
 		orth[0][0] = 2.0f / (r - l);
 		orth[0][3] = -1.0f*((r + l) / (r - l));
@@ -485,51 +495,92 @@ __device__ void RaytraceTris(Texel* col
 		
 		orth[3][3] = 1;
 
-		mult(orth, sspA);
-		mult(orth, sspB);
-		mult(orth, sspC);
-
 		//TODO: orthographic projection of triangle according to viewing ray
 		//Before onleft tests (for filling)
 		//0, 0, -600 at centre of screen...
 		vec3 raydir = { 0 };
-		raydir[0] = ray_x/orig_z;
-		raydir[1] = ray_y/orig_z;
-		//mult(orth, raydir);
+		raydir[0] = ray_x;
+		raydir[1] = ray_y;
+		raydir[2] = ray_z;
+
+		//all verts are behind camera
+		if (sspA[2] > 0 && sspB[2] > 0 && sspC[2] > 0) return;
+		//TODO: stop culling just because some verts are behind camera
+		//i.e. render the on-screen portion of any partially-behind camera tris!!!
+		
+		mult(persp, sspA);
+		mult(persp, sspB);
+		mult(persp, sspC);
+		mult(persp, raydir);
+
+		//alternative triangle test:
+		//calculate intersection with plane
+		// mew = (-1)(rayOrig - P1).n / (rayDir.n)
+		// rayOrig + (mew*d) = intersection with plane
+		// 0 < alpha <= 1
+		// 0 < beta <= 1
+		// alpha+beta <= 1
+		//WHERE
+		//a = p2-p1
+		//b = p3-p1
+		//alpha = (b.b)(q.a) - (a.b)(q.b) / (a.a)(b.b)-(a.b)^2
+		//beta = (q.b)-(alpha*(a.b)) / (b.b)
+		//q = alpha*a + beta*b
+
+		//see GraphicsSlides09 screenshot on phone...
+
+		//TODO: only render closest intersection to ray origin
 
 		//parallelogram mat. det. magic ->
 		//Shortcut to calculate the signed area
 		//(x2-x1)(y3-y2)-(x3-x2)(y2-y1)
-		float sgnArea = 0.5f*
+
+		//a->b
+		float sgnArea1 = 0.5f*
 			((sspB[0] - sspA[0])*(raydir[1] - sspB[1])
 				- (raydir[0] - sspB[0])*(sspB[1] - sspA[1]));
 
-		if (sgnArea > 0.0f) {
+		if (sgnArea1 > 0.0f) {
 
-			sgnArea = 0.5f*((sspC[0] - sspB[0])*(raydir[1] - sspC[1])
+			//b->c
+			float sgnArea2 = 0.5f*((sspC[0] - sspB[0])*(raydir[1] - sspC[1])
 				- (raydir[0] - sspC[0])*(sspC[1] - sspB[1]));
 
-			if (sgnArea > 0.0f) {
+			if (sgnArea2 > 0.0f) {
 
-				sgnArea = 0.5f*((sspA[0] - sspC[0])*(raydir[1] - sspA[1])
+				//c->a
+				float sgnArea3 = 0.5f*((sspA[0] - sspC[0])*(raydir[1] - sspA[1])
 					- (raydir[0] - sspA[0])*(sspA[1] - sspC[1]));
 
-				if (sgnArea > 0.0f) {
+				if (sgnArea3 > 0.0f) {
 
+					sgnArea1 = abs(sgnArea1);
+					sgnArea2 = abs(sgnArea2);
+					sgnArea3 = abs(sgnArea3);
+					float totalArea = sgnArea1 + sgnArea2 + sgnArea3;
 
-					//TODO: interpolate UV/col between vertex and hit position
-					//and average values
-					col->r = 255;
-					col->g = 255;
-					col->b = 255;
+					blendCol(col, 0.5f,
+						255.0f * (
+						((verts[tri + 1].color[0] * (sgnArea1 / totalArea)) + (verts[tri + 0].color[0] * (1.0f - (sgnArea1 / totalArea))) +
+							(verts[tri + 2].color[0] * (sgnArea2 / totalArea)) + (verts[tri + 1].color[0] * (1.0f - (sgnArea2 / totalArea))) +
+							(verts[tri + 0].color[0] * (sgnArea3 / totalArea)) + (verts[tri + 2].color[0] * (1.0f - (sgnArea3 / totalArea))))
+							/ 3.0f),
+						255.0f  * (
+						((verts[tri + 1].color[1] * (sgnArea1 / totalArea)) + (verts[tri + 0].color[1] * (1.0f - (sgnArea1 / totalArea))) +
+							(verts[tri + 2].color[1] * (sgnArea2 / totalArea)) + (verts[tri + 1].color[1] * (1.0f - (sgnArea2 / totalArea))) +
+							(verts[tri + 0].color[1] * (sgnArea3 / totalArea)) + (verts[tri + 2].color[1] * (1.0f - (sgnArea3 / totalArea))))
+							/ 3.0f),
+						255.0f  * (
+						((verts[tri + 1].color[2] * (sgnArea1 / totalArea)) + (verts[tri + 0].color[2] * (1.0f - (sgnArea1 / totalArea))) +
+							(verts[tri + 2].color[2] * (sgnArea2 / totalArea)) + (verts[tri + 1].color[2] * (1.0f - (sgnArea2 / totalArea))) +
+							(verts[tri + 0].color[2] * (sgnArea3 / totalArea)) + (verts[tri + 2].color[2] * (1.0f - (sgnArea3 / totalArea))))
+							/ 3.0f));
 
 				}
 
 			}
 		}
 	}
-
-	return;
 }
 
 template<>
@@ -540,7 +591,8 @@ __device__ void RaytraceTris<MAX_RAY_DEPTH>(Texel* col
 	, float ray_x, float ray_y, float ray_z
 	, float orig_x, float orig_y, float orig_z
 	, int bouncedFromSphereIndex
-	, float blendR, float blendG, float blendB)
+	, float blendR, float blendG, float blendB
+	, mat4x4 &persp)
 {
 	return;
 }
@@ -953,6 +1005,35 @@ __global__ void get_raytraced_pixels(Texel* pixels, Vertex* verts, int numTris, 
 			,1.0f, 1.0f, 1.0f);
 			*/
 
+		//TODO: calculate on host and copy to CUDA device once/when changed
+		mat4x4 persp = { 0 };
+		//aspect ratio: x/y
+		const float ar = 1;
+		const float zNear = 0;
+		const float zFar = -600;
+		const float zRange = zNear - zFar;
+		float tanHalfFOV = tanf((-10.0f)*(3.14159f / 180.0f));
+
+		persp[0][0] = 1.0f / (tanHalfFOV * ar);
+		persp[0][1] = 0.0f;
+		persp[0][2] = 0.0f;
+		persp[0][3] = 0.0f;
+
+		persp[1][0] = 0.0f;
+		persp[1][1] = 1.0f / tanHalfFOV;
+		persp[1][2] = 0.0f;
+		persp[1][3] = 0.0f;
+
+		persp[2][0] = 0.0f;
+		persp[2][1] = 0.0f;
+		persp[2][2] = (-zNear - zFar) / zRange;
+		persp[2][3] = 2.0f * zFar * zNear / zRange;
+
+		persp[3][0] = 0.0f;
+		persp[3][1] = 0.0f;
+		persp[3][2] = 1.0f;
+		persp[3][3] = 0.0f;
+
 		RaytraceTris<1>(
 			//image
 			&pixels[y_int * WIDTH + x_int]
@@ -966,6 +1047,7 @@ __global__ void get_raytraced_pixels(Texel* pixels, Vertex* verts, int numTris, 
 			, cam_x + (WIDTH / -2.0f), cam_y + (HEIGHT / -2.0f), cam_z + 1000,
 			-1
 			, 1.0f, 1.0f, 1.0f
+			,persp
 			);
 		
 	}
@@ -977,6 +1059,7 @@ __global__ void get_raytraced_pixels(Texel* pixels, Vertex* verts, int numTris, 
 //Global to program
 Sphere* spheres;
 const int NUM_SPHERES = 6;
+const int NUM_TRIS = 3;
 const int NUM_LIGHTS = 2;
 
 void* cudaSpheres;
@@ -2200,19 +2283,20 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
 
 	checkCudaErrors(cudaMallocManaged((void**)&cudaSpheres, NUM_SPHERES * sizeof(Sphere), cudaMemAttachGlobal));
 	checkCudaErrors(cudaMemcpy(cudaSpheres, spheres, NUM_SPHERES * sizeof(Sphere), cudaMemcpyHostToDevice));
+	
+	vertData = (Vertex*)malloc(3 * NUM_TRIS * sizeof(Vertex));
 
-
-	vertData = (Vertex*)malloc(3 * sizeof(Vertex));
+	// BEGIN TRI 1
 
 	vertData[0] = Vertex();
 
-	vertData[0].pos[0] = 512.0f;
-	vertData[0].pos[1] = 512.0f;
+	vertData[0].pos[0] = 512;
+	vertData[0].pos[1] = 512;
 	vertData[0].pos[2] = -100.0f;
 	vertData[0].pos[3] = 1.0f;
 
-	vertData[0].color[0] = 1.0f;
-	vertData[0].color[1] = 1.0f;
+	vertData[0].color[0] = 0.0f;
+	vertData[0].color[1] = 0.0f;
 	vertData[0].color[2] = 1.0f;
 
 	vertData[1] = Vertex();
@@ -2222,9 +2306,9 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
 	vertData[1].pos[2] = -100.0f;
 	vertData[1].pos[3] = 1.0f;
 
-	vertData[1].color[0] = 1.0f;
+	vertData[1].color[0] = 0.0f;
 	vertData[1].color[1] = 1.0f;
-	vertData[1].color[2] = 1.0f;
+	vertData[1].color[2] = 0.0f;
 
 	vertData[2] = Vertex();
 
@@ -2234,11 +2318,90 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
 	vertData[2].pos[3] = 1.0f;
 
 	vertData[2].color[0] = 1.0f;
-	vertData[2].color[1] = 1.0f;
-	vertData[2].color[2] = 1.0f;
+	vertData[2].color[1] = 0.0f;
+	vertData[2].color[2] = 0.0f;
 
-	checkCudaErrors(cudaMallocManaged((void**)&cudaVerts, 3 * sizeof(Vertex), cudaMemAttachGlobal));
-	checkCudaErrors(cudaMemcpy(cudaVerts, vertData, 3 * sizeof(Vertex), cudaMemcpyHostToDevice));
+
+	//END TRI 1
+
+	// BEGIN TRI 2
+
+	vertData[3] = Vertex();
+
+	vertData[3].pos[0] = 512;
+	vertData[3].pos[1] = -512;
+	vertData[3].pos[2] = -100.0f;
+	vertData[3].pos[3] = 1.0f;
+
+	vertData[3].color[0] = 1.0f;
+	vertData[3].color[1] = 0.0f;
+	vertData[3].color[2] = 0.0f;
+
+	vertData[4] = Vertex();
+
+	vertData[4].pos[0] = -512.0f;
+	vertData[4].pos[1] = -512.0f;
+	vertData[4].pos[2] = -100.0f;
+	vertData[4].pos[3] = 1.0f;
+
+	vertData[4].color[0] = 0.0f;
+	vertData[4].color[1] = 1.0f;
+	vertData[4].color[2] = 0.0f;
+
+	vertData[5] = Vertex();
+
+	vertData[5].pos[0] = -512.0f;
+	vertData[5].pos[1] = -512.0f;
+	vertData[5].pos[2] = -300.0f;
+	vertData[5].pos[3] = 1.0f;
+
+	vertData[5].color[0] = 0.0f;
+	vertData[5].color[1] = 0.0f;
+	vertData[5].color[2] = 1.0f;
+
+
+	//END TRI 2
+
+	// BEGIN TRI 3
+
+	vertData[6] = Vertex();
+
+	vertData[6].pos[0] = -512;
+	vertData[6].pos[1] = 512;
+	vertData[6].pos[2] = -100.0f;
+	vertData[6].pos[3] = 1.0f;
+
+	vertData[6].color[0] = 1.0f;
+	vertData[6].color[1] = 0.0f;
+	vertData[6].color[2] = 0.0f;
+
+	vertData[7] = Vertex();
+
+	vertData[7].pos[0] = -512.0f;
+	vertData[7].pos[1] = -512.0f;
+	vertData[7].pos[2] = -100.0f;
+	vertData[7].pos[3] = 1.0f;
+
+	vertData[7].color[0] = 0.0f;
+	vertData[7].color[1] = 1.0f;
+	vertData[7].color[2] = 0.0f;
+
+	vertData[8] = Vertex();
+
+	vertData[8].pos[0] = 512.0f;
+	vertData[8].pos[1] = 512.0f;
+	vertData[8].pos[2] = -100.0f;
+	vertData[8].pos[3] = 1.0f;
+
+	vertData[8].color[0] = 0.0f;
+	vertData[8].color[1] = 0.0f;
+	vertData[8].color[2] = 1.0f;
+
+
+	//END TRI 3
+
+	checkCudaErrors(cudaMallocManaged((void**)&cudaVerts, 3 * NUM_TRIS * sizeof(Vertex), cudaMemAttachGlobal));
+	checkCudaErrors(cudaMemcpy(cudaVerts, vertData, 3 * NUM_TRIS * sizeof(Vertex), cudaMemcpyHostToDevice));
 
     checkCudaErrors(cudaStreamSynchronize(streamToRun));
   }
@@ -3193,7 +3356,7 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
     get_raytraced_pixels<<<grid, block, 0, streamToRun>>>(
 		pixelData
 		,(Vertex*)cudaVerts
-		, 1
+		, NUM_TRIS
 		, (Sphere*)cudaSpheres
 		, NUM_SPHERES
 		, cam_x
