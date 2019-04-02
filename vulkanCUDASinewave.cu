@@ -263,6 +263,15 @@ __device__ float dot(vec3 l, vec3 r) {
 	return (l[0] * r[0]) + (l[1] * r[1]) + (l[2] * r[2]);
 }
 
+__device__ float cross(int axis, vec3 a, vec3 b) {
+	//cx = aybz - azby
+	if (axis == 0) return a[1] * b[2] - a[2] * b[1];
+	//cx = azbx - axbz
+	if (axis == 1) return a[2] * b[0] - a[0] * b[2];
+	//cx = axby - aybx
+	if (axis == 2) return a[0] * b[1] - a[1] * b[0];
+}
+
 __device__ float intersect(Sphere sphere, vec3 &rayorig, vec3 &raydir)
 {
 	vec3 l = { 0 };
@@ -406,13 +415,40 @@ __device__ void blendCol(Texel* col, float factor, float r, float g, float b) {
 	col->r = (col->b * (1.0f - factor)) + (factor *  (b-lightOverspill));
 }
 
-__device__ int intersectTris(Vertex* verts, Texel* col, float factor, int numTris, mat4x4 persp, float orig_x, float orig_y, float orig_z, float ray_x, float ray_y, float ray_z) {
+__device__ void setCol(Texel* col, float r, float g, float b) {
+	//col->r =  r;
+	col->g = g;
+	//col->b =  b;
+	col->b = r;
+	col->r = b;
+}
+
+
+__device__ int intersectTris(int depth, Vertex* verts, Texel* col, float factor, int numTris, mat4x4 persp, float orig_x, float orig_y, float orig_z, float ray_x, float ray_y, float ray_z) {
+
+	//02/04 - known bugs
+	// - raydir.xy = {0,0} causes a blank cross to appear due to rodriguez rotation; consider not using (1-cos(theta)) substitution...
+	// - barycentric co-ordinates produce "black" on one corner due to bary3 being tiny - error in bary1/bary2 calculations / incorporating sgnArea visibilty?
+	// - shadow projection not working at all - odd shapes!
+	// - slow!
+	// - messy code!
+	//TODO: reorganise priorities, refactor project and use better data structures
+	// BVH -> ibo -> vbo
+	// Matrix: mult, add
+	// vector4: dot, cross, reflect, normalize
+	// initialise CUDA memory for better data structures! Currently: cudaSpheres, cudaVertData
 
 	//vec4* intersectAreas = (vec4*)malloc(sizeof(vec4));
 	//*intersectAreas[0] = -1.0f;
 	//*intersectAreas[1] = -1.0f;
 	//*intersectAreas[2] = -1.0f;
 	//*intersectAreas[3] = -1.0f;
+
+	float minbary1 = 0.0f;
+	float minbary2 = 0.0f;
+	float minbary3 = 0.0f;
+	float minDist = 99999999.0f;
+	int closestTri = -1;
 
 	for (int i = 0; i < 2; i++) {
 		//TODO: ensure the tri hit is the closest to the ray origin
@@ -428,13 +464,13 @@ __device__ int intersectTris(Vertex* verts, Texel* col, float factor, int numTri
 			//1. can barycentric co-ordinates be obtained for backface (e.g. need to flip the directionality of the verts)
 			//2. *BEST* use the original signed area approach for visibility and calculate barycentric co-ords for the outputs not using them for visibility
 
-			sspA[0] = verts[tri + ((i == 0) ? 0 : 1)].pos[0] - orig_x;
-			sspA[1] = verts[tri + ((i == 0) ? 0 : 1)].pos[1] - orig_y;
-			sspA[2] = verts[tri + ((i == 0) ? 0 : 1)].pos[2] - orig_z;
+			sspA[0] = verts[tri + ((i == 0) ? 0 : 2)].pos[0] - orig_x;
+			sspA[1] = verts[tri + ((i == 0) ? 0 : 2)].pos[1] - orig_y;
+			sspA[2] = verts[tri + ((i == 0) ? 0 : 2)].pos[2] - orig_z;
 
-			sspB[0] = verts[tri + ((i == 0) ? 1 : 2)].pos[0] - orig_x;
-			sspB[1] = verts[tri + ((i == 0) ? 1 : 2)].pos[1] - orig_y;
-			sspB[2] = verts[tri + ((i == 0) ? 1 : 2)].pos[2] - orig_z;
+			sspB[0] = verts[tri + ((i == 0) ? 1 : 1)].pos[0] - orig_x;
+			sspB[1] = verts[tri + ((i == 0) ? 1 : 1)].pos[1] - orig_y;
+			sspB[2] = verts[tri + ((i == 0) ? 1 : 1)].pos[2] - orig_z;
 
 			sspC[0] = verts[tri + ((i == 0) ? 2 : 0)].pos[0] - orig_x;
 			sspC[1] = verts[tri + ((i == 0) ? 2 : 0)].pos[1] - orig_y;
@@ -445,55 +481,99 @@ __device__ int intersectTris(Vertex* verts, Texel* col, float factor, int numTri
 			raydir[1] = ray_y;
 			raydir[2] = ray_z;
 
+			float raydirmag = magnitude(raydir);
+			raydir[0] = raydir[0] / raydirmag;
+			raydir[1] = raydir[1] / raydirmag;
+			raydir[2] = raydir[2] / raydirmag;
+
+
 			if (sspA[2] > 0) sspA[2] = -1.0f;
 			if (sspB[2] > 0) sspB[2] = -1.0f;
 			if (sspC[2] > 0) sspC[2] = -1.0f;
 			if (sspA[2] == -1.0f && sspB[2] == -1.0f && sspC[2] == -1.0f) continue;
 
-			mult(persp, sspA);
-			mult(persp, sspB);
-			mult(persp, sspC);
-			mult(persp, raydir);
+			// START INVERSE ROTATION TO ALIGN WITH z-axis
+			//rodrigues rotation formula (with 1-cos(theta) substitution)
+			vec3 rayToZ = { 0 };
+			vec3 z = { 0 };
+			z[2] = raydir[2];
+			rayToZ[0] = cross(0, raydir, z);
+			rayToZ[1] = cross(1, raydir, z);
+			rayToZ[2] = cross(2, raydir, z);
+
+			float angleToZ = -asin((3.14159f / 180.0f)*magnitude(rayToZ));
+			
+			// I  + Csin(theta) + C*C*(1-cos(theta))
+			//expanded rodrigues formula
+			mat4x4 rot = { 0 };
+			float mew = 1 - cos(angleToZ);
+			float beta = sin(angleToZ);
+
+			float ax = rayToZ[0];
+			float ay = rayToZ[1];
+			float az = rayToZ[2];
+
+			//row1
+			rot[0][0] = mew * (0 + -az * az + -ay * ay) + 1;
+			rot[0][1] = beta * (-az) + mew * (0 + 0 + ay * ax);
+			rot[0][2] = beta * (ay)+mew * (0 + -az * -ax + 0);
+
+			//row2
+			rot[1][0] = beta * (az)+mew * (0 + 0 + -ax * -ay);
+			rot[1][1] = mew * (-az * az + 0 + -ax * ax) + 1;
+			rot[1][2] = beta * (-ax) + mew * (az*ay + 0 + 0);
+
+			//row3
+			rot[2][0] = beta * (-ay) + mew * (0 + az * ax + 0);
+			rot[2][1] = beta * (ax)+mew * (-ay * -az + 0 + 0);
+			rot[2][2] = mew * (-ay * ay + -ax * ax + 0) + 1;
+
+			rot[3][3] = 1;
+
+			mult(rot, sspA);
+			mult(rot, sspB);
+			mult(rot, sspC);
+			mult(rot, raydir);
+
+
+			// END INVERSE ROTATION TO ALIGN WITH z-axis
+
+			if (depth == 1) {
+				mult(persp, sspA);
+				mult(persp, sspB);
+				mult(persp, sspC);
+				mult(persp, raydir);
+			}
 
 			//Parallelogram matrix determinant magic provides
 			//a shortcut to calculate the signed area ->
 			//0.5f * (x2-x1)(y3-y2)-(x3-x2)(y2-y1)
 			
 			//a->b
-			//float sgnArea1 = 0.5f*((sspB[0] - sspA[0])*(raydir[1] - sspB[1])
-			//		- (raydir[0] - sspB[0])*(sspB[1] - sspA[1]));
-
-
-			//New approach from: https://codeplea.com/triangular-interpolation
-			//(v2.y - v3.y)*(v1.x - v3.x) + (v3.x - v2.x)*(v1.y - v3.y)
-			float denom = (sspB[1]-sspC[1])*(sspA[0]-sspC[0]) 
-				+ (sspC[0]-sspB[0])*(sspA[1]-sspC[1]);
-
-			//(v2.y-v3.y)*(P.x-v3.x) + (v3.x-v2.x)*(P.y-v3.y)
-			// divided by denom
-			float sgnArea1 = ((sspB[1]-sspC[1])*(raydir[0]-sspC[0]) 
-				+ (sspC[0]-sspB[0])*(raydir[1]-sspC[1])) / denom;
+			float sgnArea1 = 0.5f*((sspB[0] - sspA[0])*(raydir[1] - sspB[1])
+					- (raydir[0] - sspB[0])*(sspB[1] - sspA[1]));
+			//float sgnArea1 = 0.5f*((sspB[0] - sspA[0])*(0 - sspB[1])
+			//		- (0 - sspB[0])*(sspB[1] - sspA[1]));
 
 			if (sgnArea1 > 0.0f) {
 
 				//b->c
-				//float sgnArea2 = 0.5f*((sspC[0] - sspB[0])*(raydir[1] - sspC[1])
-				//	- (raydir[0] - sspC[0])*(sspC[1] - sspB[1]));
+				float sgnArea2 = 0.5f*((sspC[0] - sspB[0])*(raydir[1] - sspC[1])
+					- (raydir[0] - sspC[0])*(sspC[1] - sspB[1]));
+				//float sgnArea2 = 0.5f*((sspC[0] - sspB[0])*(0 - sspC[1])
+				//- (0 - sspC[0])*(sspC[1] - sspB[1]));
 
 
-				//(v3.y-v1.y)*(P.x-v3.x) + (v1.x-v3.x)*(P.y-v3.y)
-				// divided by denom
-				float sgnArea2 = ((sspC[1] - sspA[1])*(raydir[0] - sspC[0])
-					+ (sspA[0] - sspC[0])*(raydir[1] - sspC[1])) / denom;
 
 				if (sgnArea2 > 0.0f) {
 
 					//c->a
-					//float sgnArea3 = 0.5f*((sspA[0] - sspC[0])*(raydir[1] - sspA[1])
-					//	- (raydir[0] - sspA[0])*(sspA[1] - sspC[1]));
+					float sgnArea3 = 0.5f*((sspA[0] - sspC[0])*(raydir[1] - sspA[1])
+						- (raydir[0] - sspA[0])*(sspA[1] - sspC[1]));
 
-					float sgnArea3 = 1.0f - sgnArea1 - sgnArea2;
-
+					//float sgnArea3 = 0.5f*((sspA[0] - sspC[0])*(0 - sspA[1])
+					//	- (0 - sspA[0])*(sspA[1] - sspC[1]));
+					
 					if (sgnArea3 > 0.0f) {
 
 						//sgnArea1 = abs(sgnArea1);
@@ -520,31 +600,51 @@ __device__ int intersectTris(Vertex* verts, Texel* col, float factor, int numTri
 								/ 3.0f));
 						*/
 
+						//New approach from: https://codeplea.com/triangular-interpolation
+					//(v2.y - v3.y)*(v1.x - v3.x) + (v3.x - v2.x)*(v1.y - v3.y)
+						float denom = (sspB[1] - sspC[1])*(sspA[0] - sspC[0])
+							+ (sspC[0] - sspB[0])*(sspA[1] - sspC[1]);
 
-						//Store weights temporarily in col
-						blendCol(col, 1.0f,
-							255 * sgnArea1,//(sgnArea1 / totalArea),
-							255 * sgnArea2,//(sgnArea2 / totalArea),
-							255 * sgnArea3//(sgnArea3 / totalArea)
-						);
+						//(v2.y-v3.y)*(P.x-v3.x) + (v3.x-v2.x)*(P.y-v3.y)
+						// divided by denom
+						float bary1 = ((sspB[1] - sspC[1])*(raydir[0] - sspC[0])
+							+ (sspC[0] - sspB[0])*(raydir[1] - sspC[1])) / denom;
 
-						return tri;
+						//(v3.y-v1.y)*(P.x-v3.x) + (v1.x-v3.x)*(P.y-v3.y)
+						// divided by denom
+						float bary2 = ((sspC[1] - sspA[1])*(raydir[0] - sspC[0])
+							+ (sspA[0] - sspC[0])*(raydir[1] - sspC[1])) / denom;
+
+						float bary3 = 1.0f - bary1 - bary2;
+
+						vec3 dist = { 0 };
+						dist[0] = (bary1*verts[tri].pos[0] + bary2 * verts[tri + 1].pos[0] + bary3 * verts[tri + 2].pos[0]) - orig_x;
+						dist[1] = (bary1*verts[tri].pos[1] + bary2 * verts[tri + 1].pos[1] + bary3 * verts[tri + 2].pos[1]) - orig_y;
+						dist[2] = (bary1*verts[tri].pos[2] + bary2 * verts[tri + 1].pos[2] + bary3 * verts[tri + 2].pos[2]) - orig_z;
+
+						float distF = magnitude(dist);
+						if (distF < minDist) {
+							minDist = distF;
+							minbary1 = bary1;
+							minbary2 = bary2;
+							minbary1 = bary3;
+							closestTri = tri;
+						}
 					}
 				}
 			}
 		}
 	}
 
-	//blendCol(col, 1.0f, 0, 0, 0);
-	return -1;
-}
 
-__device__ void setCol(Texel* col, float r, float g, float b) {
-	//col->r =  r;
-	col->g =  g;
-	//col->b =  b;
-	col->b = r;
-	col->r = b;
+	//Store weights temporarily in col
+	setCol(col,
+		255 * minbary1,//(sgnArea1 / totalArea),
+		255 * minbary2,//(sgnArea2 / totalArea),
+		255 * minbary3//(sgnArea3 / totalArea)
+	);
+
+	return closestTri;
 }
 
 #if SHAPE_MODE==0
@@ -561,17 +661,17 @@ __device__ void RaytraceTris(Texel* col
 	, mat4x4 &persp)
 {
 
-	int tri = intersectTris(verts, col, 1.0f, numTris, persp, orig_x, orig_y, orig_z, ray_x, ray_y, ray_z);
+	int tri = intersectTris(1, verts, col, 1.0f, numTris, persp, orig_x, orig_y, orig_z, ray_x, ray_y, ray_z);
 
 
 	if (tri == -1) {
-		blendCol(col, 1.0f, 0, 0, 0);
+		blendCol(col, factor, 5, 5, 8);
 	}
 	else{
 
 		//last tri is a light to be rendered as solid color
-		if (tri == 3 * (numTris - 1)) {
-			blendCol(col, 1.0f, verts[tri].color[0], verts[tri].color[1], verts[tri].color[2]);
+		if (tri == (numTris-1) * 3) {
+			setCol(col, 255*verts[tri].color[0], 255 * verts[tri].color[1], 255 * verts[tri].color[2]);
 		}else{
 
 			vec3 diffCol = { 0 };
@@ -637,13 +737,43 @@ __device__ void RaytraceTris(Texel* col
 					(verts[tri + 0].pos[2] * (col->b / 255.0f)) + (verts[tri + 2].pos[2] * (1.0f - (col->b / 255.0f))))
 					/ 3.0f);
 			*/
-			int shadowCaster = intersectTris(verts, col, 1.0f, numTris, persp, hitPos[0]+1e-4, hitPos[1] + 1e-4, hitPos[2] + 1e-4
+
+
+			// START NORMAL-ORIENTED BIAS
+			vec3 nnhit = { 0 };
+
+			vec3 ab = { 0 };
+			ab[0] = verts[tri + 1].pos[0] - verts[tri + 0].pos[0];
+			ab[1] = verts[tri + 1].pos[1] - verts[tri + 0].pos[1];
+			ab[2] = verts[tri + 1].pos[2] - verts[tri + 0].pos[2];
+
+			vec3 ac = { 0 };
+			ac[0] = verts[tri + 2].pos[0] - verts[tri + 0].pos[0];
+			ac[1] = verts[tri + 2].pos[1] - verts[tri + 0].pos[1];
+			ac[2] = verts[tri + 2].pos[2] - verts[tri + 0].pos[2];
+
+			nnhit[0] = cross(0, ab, ac);
+			nnhit[1] = cross(1, ab, ac);
+			nnhit[2] = cross(2, ab, ac);
+
+			float nnhitmag = magnitude(nnhit);
+			nnhit[0] = nnhit[0] / nnhitmag;
+			nnhit[1] = nnhit[1] / nnhitmag;
+			nnhit[2] = nnhit[2] / nnhitmag;
+
+			int shadowCaster = intersectTris(2, verts, col, 1.0f, numTris, persp
+				, hitPos[0] + nnhit[0] * 1e-5
+				, hitPos[1] + nnhit[1] * 1e-5
+				, hitPos[2] + nnhit[2] * 1e-5
 				, verts[3 * (numTris - 1)].pos[0] - hitPos[0]
 				, verts[3 * (numTris - 1)].pos[1] - hitPos[1]
 				, verts[3 * (numTris - 1)].pos[2] - hitPos[2]);
 
-			blendCol(col, 1.0f, diffCol[0], diffCol[1], diffCol[2]);
-			if (shadowCaster != -1) {
+			// END NORMAL-ORIENTED BIAS
+
+			setCol(col, 255*diffCol[0], 255*diffCol[1], 255*diffCol[2]);
+			//no shadow if light, self or nothing
+			if (shadowCaster != -1 && shadowCaster < 3*(numTris-1) && shadowCaster != tri) {
 				blendCol(col, 0.5f, 10, 10, 10);
 			}
 		}
@@ -1079,6 +1209,7 @@ __global__ void get_raytraced_pixels(Texel* pixels, Vertex* verts, int numTris, 
 		const float zNear = 0;
 		const float zFar = -600;
 		const float zRange = zNear - zFar;
+		//negative fov for -z facing camera
 		float tanHalfFOV = tanf((-2.0f)*(3.14159f / 180.0f));
 
 		persp[0][0] = 1.0f / (tanHalfFOV * ar);
@@ -1134,6 +1265,7 @@ void* cudaVerts;
 Vertex* vertData;
 //Player State
 bool spheresChanged;
+bool vertsChanged;
 float cam_x = 0.0f;
 float cam_y = 0.0f;
 float cam_z = 0.0f;
@@ -2510,7 +2642,7 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
 	vertData[12] = Vertex();
 
 	vertData[12].pos[0] = -200;
-	vertData[12].pos[1] = -1000;
+	vertData[12].pos[1] = -2100;
 	vertData[12].pos[2] = -100;
 	vertData[12].pos[3] = 1.0f;
 
@@ -2521,7 +2653,7 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
 	vertData[13] = Vertex();
 
 	vertData[13].pos[0] = 200;
-	vertData[13].pos[1] = -1000;
+	vertData[13].pos[1] = -2100;
 	vertData[13].pos[2] = -100;
 	vertData[13].pos[3] = 1.0f;
 
@@ -2532,8 +2664,8 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
 	vertData[14] = Vertex();
 
 	vertData[14].pos[0] = 200;
-	vertData[14].pos[1] = -1000;
-	vertData[14].pos[2] = -1500;
+	vertData[14].pos[1] = -2000;
+	vertData[14].pos[2] = -100;
 	vertData[14].pos[3] = 1.0f;
 
 	vertData[14].color[0] = 1.0f;
@@ -2854,12 +2986,27 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
 
 
 	  if (keys[0] || keys[1]) {
+#if SHAPE_MODE == 1
 		  spheres[2].center[1] += (keys[0]) ? -speed : speed;
 		  spheresChanged = true;
+#elif SHAPE_MODE == 0
+		  vertsChanged = true;
+		  vertData[12].pos[2] += (keys[0]) ? -speed : speed;
+		  vertData[13].pos[2] += (keys[0]) ? -speed : speed;
+		  vertData[14].pos[2] += (keys[0]) ? -speed : speed;
+#endif
 	  }
 	  if (keys[6] || keys[7]) {
+
+#if SHAPE_MODE == 1
 		  spheres[2].center[2] += (keys[6]) ? -speed : speed;
 		  spheresChanged = true;
+#elif SHAPE_MODE == 0
+		  vertsChanged = true;
+		  vertData[12].pos[1] += (keys[6]) ? -speed : speed;
+		  vertData[13].pos[1] += (keys[6]) ? -speed : speed;
+		  vertData[14].pos[1] += (keys[6]) ? -speed : speed;
+#endif
 	  }
 	  if (keys[2] || keys[3]) {
 		  cam_x += (keys[2]) ? -speed : speed;
@@ -3479,6 +3626,8 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
 	Texel* pixelData = (Texel*)cudaDevPixelptr;
 	
 	//checkCudaErrors(cudaMallocManaged((void**)&cudaSpheres, NUM_SPHERES * sizeof(Sphere), cudaMemAttachGlobal));
+#if SHAPE_MODE == 1
+	
 	if (spheresChanged) {
 		spheresChanged = false;
 		checkCudaErrors(
@@ -3492,7 +3641,24 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
 		);
 	}
 
+#elif SHAPE_MODE == 0
 
+	if (vertsChanged) {
+		vertsChanged = false;
+		//Hijack camchanged to update frame after vert data changes
+		camChanged = DEFERRED_REFRESH_SQUARE_DIM*DEFERRED_REFRESH_SQUARE_DIM;
+		checkCudaErrors(
+			cudaMemcpyAsync(
+				cudaVerts
+				, vertData
+				, NUM_TRIS * 3 * sizeof(Vertex)
+				, cudaMemcpyHostToDevice
+				, streamToRun
+			)
+		);
+	}
+
+#endif
 
 	//Render whole image
 	dim3 block(16, 16, 1);
@@ -3515,7 +3681,7 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
 			, cam_z
 			, frameStep
 			, DEFERRED_REFRESH_SQUARE_DIM
-			, 0.99f);
+			, 1.0f);
 
 		//keep count of what sub-frame is being rendered
 		if (frameStep != 0) {
