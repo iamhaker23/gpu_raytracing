@@ -69,8 +69,8 @@
 
 #include "linmath.h"
 
-#define WIDTH 1024
-#define HEIGHT 1024
+#define WIDTH 512
+#define HEIGHT 512
 #define SHAPE_MODE 0
 
  //NOTE: only support power-of-two DRSD values (for maximimising GPU utilisation)
@@ -424,12 +424,9 @@ __device__ void setCol(Texel* col, float r, float g, float b) {
 }
 
 
-__device__ int intersectTris(int depth, Vertex* verts, Texel* col, float factor, int numTris, mat4x4 persp, float orig_x, float orig_y, float orig_z, float ray_x, float ray_y, float ray_z) {
+__device__ int intersectTris(int depth, Vertex* verts, Texel* col, float factor, int numTris, mat4x4 persp, float orig_x, float orig_y, float orig_z, float ray_x, float ray_y, float ray_z, float maxDist) {
 
 	//02/04 - known bugs
-	// - raydir.xy = {0,0} causes a blank cross to appear due to rodriguez rotation; consider not using (1-cos(theta)) substitution...
-	// - barycentric co-ordinates produce "black" on one corner due to bary3 being tiny - error in bary1/bary2 calculations / incorporating sgnArea visibilty?
-	// - shadow projection not working at all - odd shapes!
 	// - slow!
 	// - messy code!
 	//TODO: reorganise priorities, refactor project and use better data structures
@@ -494,47 +491,66 @@ __device__ int intersectTris(int depth, Vertex* verts, Texel* col, float factor,
 
 			// START INVERSE ROTATION TO ALIGN WITH z-axis
 			//rodrigues rotation formula (with 1-cos(theta) substitution)
-			vec3 rayToZ = { 0 };
-			vec3 z = { 0 };
-			z[2] = raydir[2];
-			rayToZ[0] = cross(0, raydir, z);
-			rayToZ[1] = cross(1, raydir, z);
-			rayToZ[2] = cross(2, raydir, z);
-
-			float angleToZ = -asin((3.14159f / 180.0f)*magnitude(rayToZ));
 			
-			// I  + Csin(theta) + C*C*(1-cos(theta))
-			//expanded rodrigues formula
-			mat4x4 rot = { 0 };
-			float mew = 1 - cos(angleToZ);
-			float beta = sin(angleToZ);
+			//don't rotate if geometry already aligned to ray
+			if (raydir[0] != 0.0f && raydir[1] != 0.0f) {
 
-			float ax = rayToZ[0];
-			float ay = rayToZ[1];
-			float az = rayToZ[2];
+				vec3 rayToZ = { 0 };
+				vec3 z = { 0 };
+				z[2] = raydir[2];
+				z[2] = z[2] / magnitude(z);
 
-			//row1
-			rot[0][0] = mew * (0 + -az * az + -ay * ay) + 1;
-			rot[0][1] = beta * (-az) + mew * (0 + 0 + ay * ax);
-			rot[0][2] = beta * (ay)+mew * (0 + -az * -ax + 0);
+				rayToZ[0] = cross(0, raydir, z);
+				rayToZ[1] = cross(1, raydir, z);
+				rayToZ[2] = cross(2, raydir, z);
 
-			//row2
-			rot[1][0] = beta * (az)+mew * (0 + 0 + -ax * -ay);
-			rot[1][1] = mew * (-az * az + 0 + -ax * ax) + 1;
-			rot[1][2] = beta * (-ax) + mew * (az*ay + 0 + 0);
+				float rayToZMag = magnitude(rayToZ);
 
-			//row3
-			rot[2][0] = beta * (-ay) + mew * (0 + az * ax + 0);
-			rot[2][1] = beta * (ax)+mew * (-ay * -az + 0 + 0);
-			rot[2][2] = mew * (-ay * ay + -ax * ax + 0) + 1;
+				rayToZ[0] = rayToZ[0] / rayToZMag;
+				rayToZ[1] = rayToZ[1] / rayToZMag;
+				rayToZ[2] = rayToZ[2] / rayToZMag;
 
-			rot[3][3] = 1;
+				float angleToZ = asin((3.14159f / 180.0f)*rayToZMag);// *magnitude(rayToZ));
+				//float angleToZ = acos((3.14159f / 180.0f)*dot(raydir, z));
 
-			mult(rot, sspA);
-			mult(rot, sspB);
-			mult(rot, sspC);
-			mult(rot, raydir);
+				// I  + Csin(theta) + C*C*(1-cos(theta))
+				// or
+				// I + Csin(theta) + C*C*(2*sin^2(theta/2))
+				//expanded rodrigues formula
+				mat4x4 rot = { 0 };
 
+				//float mew = 1 - cos(angleToZ);
+				float beta = sin(angleToZ);
+				float sinht = sin(0.5f*angleToZ * (3.14159f / 180));
+				float mew = 0.0f;// sinht * sinht*2.0f;
+
+
+				float ax = rayToZ[0];
+				float ay = rayToZ[1];
+				float az = rayToZ[2];
+
+				//row1
+				rot[0][0] = mew * (0 + -az * az + -ay * ay) + 1;
+				rot[0][1] = beta * (-az) + mew * (0 + 0 + ay * ax);
+				rot[0][2] = beta * (ay)+mew * (0 + -az * -ax + 0);
+
+				//row2
+				rot[1][0] = beta * (az)+mew * (0 + 0 + -ax * -ay);
+				rot[1][1] = mew * (-az * az + 0 + -ax * ax) + 1;
+				rot[1][2] = beta * (-ax) + mew * (az*ay + 0 + 0);
+
+				//row3
+				rot[2][0] = beta * (-ay) + mew * (0 + az * ax + 0);
+				rot[2][1] = beta * (ax)+mew * (-ay * -az + 0 + 0);
+				rot[2][2] = mew * (-ay * ay + -ax * ax + 0) + 1;
+
+				rot[3][3] = 1;
+
+				mult(rot, sspA);
+				mult(rot, sspB);
+				mult(rot, sspC);
+				mult(rot, raydir);
+			}
 
 			// END INVERSE ROTATION TO ALIGN WITH z-axis
 
@@ -563,8 +579,6 @@ __device__ int intersectTris(int depth, Vertex* verts, Texel* col, float factor,
 				//float sgnArea2 = 0.5f*((sspC[0] - sspB[0])*(0 - sspC[1])
 				//- (0 - sspC[0])*(sspC[1] - sspB[1]));
 
-
-
 				if (sgnArea2 > 0.0f) {
 
 					//c->a
@@ -575,59 +589,52 @@ __device__ int intersectTris(int depth, Vertex* verts, Texel* col, float factor,
 					//	- (0 - sspA[0])*(sspA[1] - sspC[1]));
 					
 					if (sgnArea3 > 0.0f) {
-
-						//sgnArea1 = abs(sgnArea1);
-						//sgnArea2 = abs(sgnArea2);
-						//sgnArea3 = abs(sgnArea3);
-						//float totalArea = sgnArea1 + sgnArea2 + sgnArea3;
-
 						/*
-						blendCol(col, factor,
-							255.0f * (
-							((verts[tri + 1].color[0] * (sgnArea1 / totalArea)) + (verts[tri + 0].color[0] * (1.0f - (sgnArea1 / totalArea))) +
-								(verts[tri + 2].color[0] * (sgnArea2 / totalArea)) + (verts[tri + 1].color[0] * (1.0f - (sgnArea2 / totalArea))) +
-								(verts[tri + 0].color[0] * (sgnArea3 / totalArea)) + (verts[tri + 2].color[0] * (1.0f - (sgnArea3 / totalArea))))
-								/ 3.0f),
-							255.0f  * (
-							((verts[tri + 1].color[1] * (sgnArea1 / totalArea)) + (verts[tri + 0].color[1] * (1.0f - (sgnArea1 / totalArea))) +
-								(verts[tri + 2].color[1] * (sgnArea2 / totalArea)) + (verts[tri + 1].color[1] * (1.0f - (sgnArea2 / totalArea))) +
-								(verts[tri + 0].color[1] * (sgnArea3 / totalArea)) + (verts[tri + 2].color[1] * (1.0f - (sgnArea3 / totalArea))))
-								/ 3.0f),
-							255.0f  * (
-							((verts[tri + 1].color[2] * (sgnArea1 / totalArea)) + (verts[tri + 0].color[2] * (1.0f - (sgnArea1 / totalArea))) +
-								(verts[tri + 2].color[2] * (sgnArea2 / totalArea)) + (verts[tri + 1].color[2] * (1.0f - (sgnArea2 / totalArea))) +
-								(verts[tri + 0].color[2] * (sgnArea3 / totalArea)) + (verts[tri + 2].color[2] * (1.0f - (sgnArea3 / totalArea))))
-								/ 3.0f));
+						vec3 v0 = { 0 };
+						v0[0] = sspB[0] - sspA[0];
+						v0[1] = sspB[1] - sspA[1];
+						//v0[2] = sspB[2] - sspA[2];
+						//b - a;
+
+						vec3 v1 = { 0 };
+						v1[0] = sspC[0] - sspA[0];
+						v1[1] = sspC[1] - sspA[1];
+						//v1[2] = sspC[2] - sspA[2];
+						//c - a;
+
+						vec3 v2 = { 0 };
+						v2[0] = (raydir[0]) - sspA[0];
+						v2[1] = (raydir[1]) - sspA[1];
+						//v2[2] = (raydir[2]) - sspA[2];
+						//p - a;
+
+						float d00 = dot(v0, v0);
+						float d01 = dot(v0, v1);
+						float d11 = dot(v1, v1);
+						float d20 = dot(v2, v0);
+						float d21 = dot(v2, v1);
+						float denom = d00 * d11 - d01 * d01;
+						float bary1 = (d11 * d20 - d01 * d21) / denom;
+						float bary2 = (d00 * d21 - d01 * d20) / denom;
+						float bary3 = 1.0f - bary1 - bary2;
 						*/
 
-						//New approach from: https://codeplea.com/triangular-interpolation
-					//(v2.y - v3.y)*(v1.x - v3.x) + (v3.x - v2.x)*(v1.y - v3.y)
-						float denom = (sspB[1] - sspC[1])*(sspA[0] - sspC[0])
-							+ (sspC[0] - sspB[0])*(sspA[1] - sspC[1]);
-
-						//(v2.y-v3.y)*(P.x-v3.x) + (v3.x-v2.x)*(P.y-v3.y)
-						// divided by denom
-						float bary1 = ((sspB[1] - sspC[1])*(raydir[0] - sspC[0])
-							+ (sspC[0] - sspB[0])*(raydir[1] - sspC[1])) / denom;
-
-						//(v3.y-v1.y)*(P.x-v3.x) + (v1.x-v3.x)*(P.y-v3.y)
-						// divided by denom
-						float bary2 = ((sspC[1] - sspA[1])*(raydir[0] - sspC[0])
-							+ (sspA[0] - sspC[0])*(raydir[1] - sspC[1])) / denom;
-
-						float bary3 = 1.0f - bary1 - bary2;
+						float totalSgn = sgnArea1 + sgnArea2 + sgnArea3;
+						float bary1 = sgnArea1 / totalSgn;
+						float bary2 = sgnArea2 / totalSgn;
+						float bary3 = sgnArea3 / totalSgn;
 
 						vec3 dist = { 0 };
-						dist[0] = (bary1*verts[tri].pos[0] + bary2 * verts[tri + 1].pos[0] + bary3 * verts[tri + 2].pos[0]) - orig_x;
-						dist[1] = (bary1*verts[tri].pos[1] + bary2 * verts[tri + 1].pos[1] + bary3 * verts[tri + 2].pos[1]) - orig_y;
-						dist[2] = (bary1*verts[tri].pos[2] + bary2 * verts[tri + 1].pos[2] + bary3 * verts[tri + 2].pos[2]) - orig_z;
-
+						dist[0] = ( ((bary1*verts[tri].pos[0]) + (bary2 * verts[tri + 1].pos[0]) + (bary3 * verts[tri + 2].pos[0])) )- orig_x;
+						dist[1] = ( ((bary1*verts[tri].pos[1]) + (bary2 * verts[tri + 1].pos[1]) + (bary3 * verts[tri + 2].pos[1])) )- orig_y;
+						dist[2] = ( ((bary1*verts[tri].pos[2]) + (bary2 * verts[tri + 1].pos[2]) + (bary3 * verts[tri + 2].pos[2])) )- orig_z;
 						float distF = magnitude(dist);
-						if (distF < minDist) {
+						//if this hit point is the new closest, and is allowed
+						if (distF < minDist && (maxDist==0 || distF < maxDist) ) {
 							minDist = distF;
 							minbary1 = bary1;
 							minbary2 = bary2;
-							minbary1 = bary3;
+							minbary3 = bary3;
 							closestTri = tri;
 						}
 					}
@@ -661,7 +668,7 @@ __device__ void RaytraceTris(Texel* col
 	, mat4x4 &persp)
 {
 
-	int tri = intersectTris(1, verts, col, 1.0f, numTris, persp, orig_x, orig_y, orig_z, ray_x, ray_y, ray_z);
+	int tri = intersectTris(1, verts, col, 1.0f, numTris, persp, orig_x, orig_y, orig_z, ray_x, ray_y, ray_z, 0);
 
 
 	if (tri == -1) {
@@ -713,17 +720,22 @@ __device__ void RaytraceTris(Texel* col
 			vec3 hitPos = { 0 };
 
 			hitPos[0] =
-				(verts[tri + 0].pos[0] * (col->r / 255.0f)) +
-				(verts[tri + 1].pos[0] * (col->g / 255.0f)) +
-				(verts[tri + 2].pos[0] * (col->b / 255.0f));
+				(verts[tri + 1].pos[0] * (col->r / 255.0f)) +
+				(verts[tri + 2].pos[0] * (col->g / 255.0f)) +
+				(verts[tri + 0].pos[0] * (col->b / 255.0f))
+				;
 			hitPos[1] =
-				(verts[tri + 0].pos[1] * (col->r / 255.0f)) +
-				(verts[tri + 1].pos[1] * (col->g / 255.0f)) +
-				(verts[tri + 2].pos[1] * (col->b / 255.0f));
+				(verts[tri + 1].pos[1] * (col->r / 255.0f)) +
+				(verts[tri + 2].pos[1] * (col->g / 255.0f)) +
+				(verts[tri + 0].pos[1] * (col->b / 255.0f))
+				;
 			hitPos[2] =
-				(verts[tri + 0].pos[2] * (col->r / 255.0f)) +
-				(verts[tri + 1].pos[2] * (col->g / 255.0f)) +
-				(verts[tri + 2].pos[2] * (col->b / 255.0f));
+				(verts[tri + 1].pos[2] * (col->r / 255.0f)) +
+				(verts[tri + 2].pos[2] * (col->g / 255.0f)) +
+				(verts[tri + 0].pos[2] * (col->b / 255.0f))
+				;
+
+			mult(persp, hitPos);
 
 			/*
 			hitPos[1] =
@@ -761,21 +773,41 @@ __device__ void RaytraceTris(Texel* col
 			nnhit[1] = nnhit[1] / nnhitmag;
 			nnhit[2] = nnhit[2] / nnhitmag;
 
-			int shadowCaster = intersectTris(2, verts, col, 1.0f, numTris, persp
-				, hitPos[0] + nnhit[0] * 1e-5
-				, hitPos[1] + nnhit[1] * 1e-5
-				, hitPos[2] + nnhit[2] * 1e-5
-				, verts[3 * (numTris - 1)].pos[0] - hitPos[0]
-				, verts[3 * (numTris - 1)].pos[1] - hitPos[1]
-				, verts[3 * (numTris - 1)].pos[2] - hitPos[2]);
-
 			// END NORMAL-ORIENTED BIAS
 
-			setCol(col, 255*diffCol[0], 255*diffCol[1], 255*diffCol[2]);
+			vec3 nld = { 0 };
+			nld[0] = verts[3 * (numTris - 1)].pos[0] - hitPos[0];
+			nld[1] = verts[3 * (numTris - 1)].pos[1] - hitPos[1];
+			nld[2] = verts[3 * (numTris - 1)].pos[2] - hitPos[2];
+
+			float nldmag = magnitude(nld);
+			nld[0] = nld[0] / nldmag;
+			nld[1] = nld[1] / nldmag;
+			nld[2] = nld[2] / nldmag;
+
+			int shadowCaster = intersectTris(2, verts, col, 1.0f, numTris, persp
+				, hitPos[0] + nnhit[0] * 1e-3
+				, hitPos[1] + nnhit[1] * 1e-3
+				, hitPos[2] + nnhit[2] * 1e-3
+				, nld[0]
+				, nld[1]
+				, nld[2]
+				, nldmag);
+
 			//no shadow if light, self or nothing
-			if (shadowCaster != -1 && shadowCaster < 3*(numTris-1) && shadowCaster != tri) {
-				blendCol(col, 0.5f, 10, 10, 10);
-			}
+			float m = (shadowCaster != -1 && shadowCaster != 3 * (numTris - 1) && shadowCaster != tri) ? 0 : dot(nld, nnhit);
+			//vec3 nnnhit = { 0 };
+			//nnnhit[0] = -nnhit[0];
+			//nnnhit[1] = -nnhit[1];
+			//nnnhit[2] = -nnhit[2];
+			//float m2 = dot(nld, nnnhit);
+			//m = max(m, m2);
+
+			setCol(col
+				, 255 * diffCol[0] * verts[3 * (numTris - 1)].color[0] * m
+				, 255 * diffCol[1] * verts[3 * (numTris - 1)].color[1] * m
+				, 255 * diffCol[2] * verts[3 * (numTris - 1)].color[2] * m);
+
 		}
 	}
 }
@@ -2626,7 +2658,7 @@ VkDebugReportCallbackCreateInfoEXT createInfo = {};
 
 	vertData[11] = Vertex();
 
-	vertData[11].pos[0] = 3000;
+	vertData[11].pos[0] = 1500;
 	vertData[11].pos[1] = 1500;
 	vertData[11].pos[2] = -3000;
 	vertData[11].pos[3] = 1.0f;
