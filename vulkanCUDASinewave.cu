@@ -452,6 +452,7 @@ __device__ int intersectTris(int depth, Vertex* verts, Texel* col, float factor,
 	float minDist = 99999999.0f;
 	int closestTri = -1;
 
+	int i = 0;
 	for (int i = 0; i < 2; i++) {
 		//TODO: ensure the tri hit is the closest to the ray origin
 		//TODO: actual lights instead of assuming last triangle as light source
@@ -465,6 +466,27 @@ __device__ int intersectTris(int depth, Vertex* verts, Texel* col, float factor,
 			//TRY:
 			//1. can barycentric co-ordinates be obtained for backface (e.g. need to flip the directionality of the verts)
 			//2. *BEST* use the original signed area approach for visibility and calculate barycentric co-ords for the outputs not using them for visibility
+
+			//Moller-Trumbore
+			//V1
+			//V2
+			//V3
+			//RayOrigin
+			//RayDir
+			//Edge1 = V2-v1
+			//Edge2 = V3-V1
+			//h=raydir.cross(Edge2)
+			//A=Edge1.dot(h)
+			//IF A < Epsilon &&  A > -Epsilon (no hit)
+			//s=rayOrigin-V1
+			//U=s.dot(h)/A
+			//IF U < 0.0 || U > 1.0 (no hit)
+			//Q=s.cross(Edge1)
+			//V=raydir.dot(Q)/A
+			//IF V < 0.0 || U+V > 1.0 (no hit)
+			//t=edge2.dot(Q)/A
+			//IF t > Epsilon (hit, return RayOrigin+RayDir*t)
+			//ELSE no hit
 
 			sspA[0] = verts[tri + ((i == 0) ? 0 : 2)].pos[0] - orig_x;
 			sspA[1] = verts[tri + ((i == 0) ? 0 : 2)].pos[1] - orig_y;
@@ -561,13 +583,13 @@ __device__ int intersectTris(int depth, Vertex* verts, Texel* col, float factor,
 			// END INVERSE ROTATION TO ALIGN WITH z-axis
 			*/
 
-
-			if (depth == 1) {
-				mult(persp, sspA);
-				mult(persp, sspB);
-				mult(persp, sspC);
-				mult(persp, raydir);
-			}
+			//force perspective since the approach does not account for z dist
+			//if (depth == 1) {
+			//	mult(persp, sspA);
+			//	mult(persp, sspB);
+			//	mult(persp, sspC);
+			//	mult(persp, raydir);
+			//}
 
 
 			//Parallelogram matrix determinant magic provides
@@ -772,7 +794,6 @@ __device__ void RaytraceTris(Texel* col
 				, ld[2]
 				, lightZ);
 				//, nldmag);
-
 
 			//no shadow if light, self or nothing
 			float m = (shadowCaster != -1 && shadowCaster != 3 * (numTris - 1) && shadowCaster != tri) ? 0.0f : max(0.1f, dot(nld, nnhit));
@@ -1230,7 +1251,7 @@ __global__ void get_raytraced_pixels(Texel* pixels, Vertex* verts, int numTris, 
 
 		const float ar = 1;
 		const float zNear = 0;
-		const float zFar = -200;
+		const float zFar = -1000;
 		const float zRange = zNear - zFar;
 		//negative fov for -z facing camera
 		float tanHalfFOV = tanf((-10.0f)*(3.14159f / 180.0f));
