@@ -5,6 +5,7 @@ struct Vertex {
 	vec4 pos;
 	vec3 color;
 	vec3 uv;
+	vec3 normal;
 
 	/*
 	static VkVertexInputBindingDescription getBindingDescription() {

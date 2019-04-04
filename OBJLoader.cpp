@@ -6,71 +6,116 @@ std::vector<vector3d> OBJLoader::m_vNormals = std::vector<vector3d>();
 std::vector<vector3d> OBJLoader::m_vTexCoords = std::vector<vector3d>();
 std::vector<SObjFace> OBJLoader::m_vFaces = std::vector<SObjFace>();
 std::vector<ObjMat> OBJLoader::theMats = std::vector<ObjMat>();
+std::vector<Vertex> OBJLoader::m_distinctVerts = std::vector<Vertex>();
 
 int OBJLoader::loadRawVertexList(const char * fileName, Vertex** vertData, float scale) {
+
+	m_distinctVerts.clear();
 
 	if (!OBJLoader::myFileLoader(fileName)){
 		throw std::exception("OBJLoader: Failed to load model.");
 	}
 
-	std::vector<Vertex> distinctVerts = std::vector<Vertex>();
-
 	//loop over faces, store triangle verts
 	for (int face = 0; face < m_vFaces.size(); face++) {
 
-		int vertAIdx = m_vFaces[face].m_uiVertIdx[0];
-		int vertBIdx = m_vFaces[face].m_uiVertIdx[1];
-		int vertCIdx = m_vFaces[face].m_uiVertIdx[2];
+		unsigned int vertAIdx = m_vFaces[face].m_uiVertIdx[0];
+		unsigned int vertBIdx = m_vFaces[face].m_uiVertIdx[1];
+		unsigned int vertCIdx = m_vFaces[face].m_uiVertIdx[2];
 
-		int normAIdx = m_vFaces[face].m_uiNormalIdx[0];
-		int normBIdx = m_vFaces[face].m_uiNormalIdx[1];
-		int normCIdx = m_vFaces[face].m_uiNormalIdx[2];
+		unsigned int normAIdx = m_vFaces[face].m_uiNormalIdx[0];
+		unsigned int normBIdx = m_vFaces[face].m_uiNormalIdx[1];
+		unsigned int normCIdx = m_vFaces[face].m_uiNormalIdx[2];
 
-		//TODO: use vertex indexing
+		unsigned int uvAIdx = m_vFaces[face].m_uiTexCoordIdx[0];
+		unsigned int uvBIdx = m_vFaces[face].m_uiTexCoordIdx[1];
+		unsigned int uvCIdx = m_vFaces[face].m_uiTexCoordIdx[2];
+		
+		//TODO: use vertex indexing to minimise duplication in vertData
 		//Get distinct vertex points
 		Vertex v1 = Vertex();
-		v1.pos[0] = m_vVertices[vertAIdx].pos[0];
-		v1.pos[1] = m_vVertices[vertAIdx].pos[1];
-		v1.pos[2] = m_vVertices[vertAIdx].pos[2];
-		v1.color[0] = abs(m_vNormals[normAIdx].pos[0]);
-		v1.color[1] = abs(m_vNormals[normAIdx].pos[1]);
-		v1.color[2] = abs(m_vNormals[normAIdx].pos[2]);
+		v1.pos[0] = m_vVertices[vertAIdx].pos[0] * scale;
+		v1.pos[1] = m_vVertices[vertAIdx].pos[1] * scale;
+		v1.pos[2] = m_vVertices[vertAIdx].pos[2] * scale;
+
+		if (normAIdx < m_vNormals.size()) {
+			v1.normal[0] = m_vNormals[normAIdx].pos[0];
+			v1.normal[1] = m_vNormals[normAIdx].pos[1];
+			v1.normal[2] = m_vNormals[normAIdx].pos[2];
+		}
+		v1.color[0] = 1.0f;
+		v1.color[1] = 0.0f;
+		v1.color[2] = 0.0f;
+		
+		if (uvAIdx < m_vTexCoords.size()) {
+			v1.uv[0] = abs(m_vTexCoords[uvAIdx].pos[0]);
+			v1.uv[1] = abs(m_vTexCoords[uvAIdx].pos[1]);
+			v1.uv[2] = abs(m_vTexCoords[uvAIdx].pos[2]);
+		}
 
 		Vertex v2 = Vertex();
-		v2.pos[0] = m_vVertices[vertBIdx].pos[0];
-		v2.pos[1] = m_vVertices[vertBIdx].pos[1];
-		v2.pos[2] = m_vVertices[vertBIdx].pos[2];
-		v2.color[0] = abs(m_vNormals[normBIdx].pos[0]);
-		v2.color[1] = abs(m_vNormals[normBIdx].pos[1]);
-		v2.color[2] = abs(m_vNormals[normBIdx].pos[2]);
+		v2.pos[0] = m_vVertices[vertBIdx].pos[0] * scale;
+		v2.pos[1] = m_vVertices[vertBIdx].pos[1] * scale;
+		v2.pos[2] = m_vVertices[vertBIdx].pos[2] * scale;
+
+		if (normBIdx < m_vNormals.size()) {
+			v2.normal[0] = m_vNormals[normBIdx].pos[0];
+			v2.normal[1] = m_vNormals[normBIdx].pos[1];
+			v2.normal[2] = m_vNormals[normBIdx].pos[2];
+		}
+		v2.color[0] = 0.0f;
+		v2.color[1] = 1.0f;
+		v2.color[2] = 0.0f;
+
+		if (uvBIdx < m_vTexCoords.size()) {
+			v2.uv[0] = abs(m_vTexCoords[uvBIdx].pos[0]);
+			v2.uv[1] = abs(m_vTexCoords[uvBIdx].pos[1]);
+			v2.uv[2] = abs(m_vTexCoords[uvBIdx].pos[2]);
+		}
 
 		Vertex v3 = Vertex();
-		v3.pos[0] = m_vVertices[vertCIdx].pos[0];
-		v3.pos[1] = m_vVertices[vertCIdx].pos[1];
-		v3.pos[2] = m_vVertices[vertCIdx].pos[2];
-		v3.color[0] = abs(m_vNormals[normCIdx].pos[0]);
-		v3.color[1] = abs(m_vNormals[normCIdx].pos[1]);
-		v3.color[2] = abs(m_vNormals[normCIdx].pos[2]);
+		v3.pos[0] = m_vVertices[vertCIdx].pos[0] * scale;
+		v3.pos[1] = m_vVertices[vertCIdx].pos[1] * scale;
+		v3.pos[2] = m_vVertices[vertCIdx].pos[2] * scale;
 
-		distinctVerts.push_back(v1);
-		distinctVerts.push_back(v2);
-		distinctVerts.push_back(v3);
+		if (normCIdx < m_vNormals.size()) {
+			v3.normal[0] = m_vNormals[normCIdx].pos[0];
+			v3.normal[1] = m_vNormals[normCIdx].pos[1];
+			v3.normal[2] = m_vNormals[normCIdx].pos[2];
+		}
+		v3.color[0] = 0.0f;
+		v3.color[1] = 0.0f;
+		v3.color[2] = 1.0f;
+
+		if (uvCIdx < m_vTexCoords.size()) {
+			v3.uv[0] = abs(m_vTexCoords[uvCIdx].pos[0]);
+			v3.uv[1] = abs(m_vTexCoords[uvCIdx].pos[1]);
+			v3.uv[2] = abs(m_vTexCoords[uvCIdx].pos[2]);
+		}
+
+		m_distinctVerts.push_back(v1);
+		m_distinctVerts.push_back(v2);
+		m_distinctVerts.push_back(v3);
 
 	}
 
-	int size = distinctVerts.size();
-	std::cout << "Loading " << size << " vertices (scale=" << scale * 100.0f << "%) from " << fileName << std::endl;
-
-	//copy list into vertData
-	*vertData = (Vertex*)malloc(size * sizeof(Vertex));
-
-	for (int v = 0; v < size; v++) {
-		*vertData[v] = Vertex(distinctVerts[v]);
-	}
+	int size = m_distinctVerts.size();
+	std::cout << "Loading " << size << " vertices (scale=" << scale << "x) from " << fileName << std::endl;
 
 	//return size
 	return size;
 }
+
+void OBJLoader::loadVertices(Vertex* vertData, int numVerts) {
+
+
+	//TODO: do I understand this?
+	//vertData is now an array of pointers?
+	for (int v = 0; v < numVerts; v++) {
+		vertData[v] = m_distinctVerts[v];
+	}
+}
+
 
 bool OBJLoader::myFileLoader(const char *filename)
 {
@@ -110,10 +155,11 @@ bool OBJLoader::myFileLoader(const char *filename)
 				float thePoints[3];
 				fgets(line, 255, theFile); //read in the whole line				
 				sscanf_s(line, " %f %f %f", &thePoints[0], &thePoints[1], &thePoints[2]); //get the vertex coords
-				//Convert coordinates from 3DS Max coordinate system to OpenGL
-				thePoints[0] *= -1.0f;
-				thePoints[2] *= -1.0f;
-
+				
+				//Flip when exporting from OBJ to openGL
+				//thePoints[0] *= -1.0f;
+				thePoints[1] *= -1.0f;
+				//thePoints[2] *= -1.0f;
 
 				vector3d tmp = vector3d();
 				tmp.pos[0] = thePoints[0];
@@ -129,6 +175,7 @@ bool OBJLoader::myFileLoader(const char *filename)
 				fgets(line, 255, theFile); //get the Normals						
 				sscanf_s(line, " %f %f %f", &theNormals[0], &theNormals[1], &theNormals[2]); //get the normal coords	
 
+				
 				vector3d tmp = vector3d();
 				tmp.pos[0] = theNormals[0];
 				tmp.pos[1] = theNormals[1];

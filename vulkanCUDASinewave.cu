@@ -305,7 +305,12 @@ __device__ float hasIntersection(Sphere sphere, vec3 &rayorig, vec3 &raydir, flo
 }
 
 struct IntersectionResult{
+	/*
 	vec4 pos = { 0 };
+	vec4 normal = { 0 };
+	*/
+	vec3 pos = { 0 };
+	vec3 normal = { 0 };
 	vec4 col = { 0 };
 	int triIndex = -1;
 	int faceDir = 0;
@@ -409,6 +414,9 @@ __device__ void intersectTris(int depth, Vertex* verts, IntersectionResult* outh
 	outhit->col[0] = 0;
 	outhit->col[1] = 0;
 	outhit->col[2] = 0;
+	outhit->normal[0] = 0;
+	outhit->normal[1] = 0;
+	outhit->normal[2] = 0;
 	outhit->triIndex = -1;
 	outhit->faceDir = 0;
 	
@@ -561,6 +569,19 @@ __device__ void intersectTris(int depth, Vertex* verts, IntersectionResult* outh
 			(verts[closestTri + 1].color[2] * minV) +
 			(verts[closestTri + 2].color[2] * minU);
 
+		outhit->normal[0] =
+			(verts[closestTri + 0].normal[0] * (1.0 - minV - minU)) +
+			(verts[closestTri + 1].normal[0] * minV) +
+			(verts[closestTri + 2].normal[0] * minU);
+		outhit->normal[1] =
+			(verts[closestTri + 0].normal[1] * (1.0 - minV - minU)) +
+			(verts[closestTri + 1].normal[1] * minV) +
+			(verts[closestTri + 2].normal[1] * minU);
+		outhit->normal[2] =
+			(verts[closestTri + 0].normal[2] * (1.0 - minV - minU)) +
+			(verts[closestTri + 1].normal[2] * minV) +
+			(verts[closestTri + 2].normal[2] * minU);
+
 		outhit->triIndex = closestTri;
 		outhit->faceDir = faceDir;
 	}
@@ -585,7 +606,7 @@ __device__ void intersectTris(int depth, Vertex* verts, IntersectionResult* outh
 
 #if SHAPE_MODE==0
 
-template<int depth>
+//template<int depth>
 __device__ void RaytraceTris(Texel* col
 	, float factor
 	, Vertex* verts
@@ -621,9 +642,9 @@ __device__ void RaytraceTris(Texel* col
 			diffCol[2] = hitlist->col[2];
 
 			vec3 toLight = { 0 };
-			toLight[0] = verts[(numTris - 1) * 3].pos[0] - hitPos[0];
-			toLight[1] = verts[(numTris - 1) * 3].pos[1] - hitPos[1];
-			toLight[2] = verts[(numTris - 1) * 3].pos[2] - hitPos[2];
+			toLight[0] = verts[(numTris - 1) * 3].pos[0] - (hitPos[0]);
+			toLight[1] = verts[(numTris - 1) * 3].pos[1] - (hitPos[1]);
+			toLight[2] = verts[(numTris - 1) * 3].pos[2] - (hitPos[2]);
 
 			float distToLight = magnitude(toLight);
 			toLight[0] = toLight[0] / distToLight;
@@ -631,9 +652,9 @@ __device__ void RaytraceTris(Texel* col
 			toLight[2] = toLight[2] / distToLight;
 
 			intersectTris(2, verts, hitlist, factor, numTris, persp
-				, hitPos[0]
-				, hitPos[1]
-				, hitPos[2]
+				, hitPos[0] + hitlist->normal[0] * 1e-2
+				, hitPos[1] + hitlist->normal[1] * 1e-2
+				, hitPos[2] + hitlist->normal[2] * 1e-2
 				, toLight[0], toLight[1], toLight[2]
 				, distToLight);
 
@@ -673,12 +694,27 @@ __device__ void RaytraceTris(Texel* col
 				nnhit[0] = nnhit[0] / nnhitmag;
 				nnhit[1] = nnhit[1] / nnhitmag;
 				nnhit[2] = nnhit[2] / nnhitmag;
+				
+
+				/*
+
+				Pre-computed normals do not work here - wrong space?
+
+				vec3 nnhit = { 0 };
+				nnhit[0] = hitlist->normal[0];
+				nnhit[1] = hitlist->normal[1];
+				nnhit[2] = hitlist->normal[2];
+				 //normal from OBJ file is already normalised
+				float hitNormalMagnitude = magnitude(nnhit);
+				nnhit[0] = nnhit[0]/ hitNormalMagnitude;
+				nnhit[1] = nnhit[1]/ hitNormalMagnitude;
+				nnhit[2] = nnhit[2]/ hitNormalMagnitude;
+				*/
 
 				vec3 nnnhit = { 0 };
 				nnnhit[0] = -1 * nnhit[0];
 				nnnhit[1] = -1 * nnhit[1];
 				nnnhit[2] = -1 * nnhit[2];
-
 				// END NORMAL-ORIENTED BIAS
 
 				vec3 ld = { 0 };
@@ -703,7 +739,7 @@ __device__ void RaytraceTris(Texel* col
 		}
 	}
 }
-
+/*
 template<>
 __device__ void RaytraceTris<MAX_RAY_DEPTH>(Texel* col
 	, float factor
@@ -716,6 +752,7 @@ __device__ void RaytraceTris<MAX_RAY_DEPTH>(Texel* col
 {
 	return;
 }
+*/
 
 #elif SHAPE_MODE==1
 
@@ -1135,7 +1172,7 @@ __global__ void get_raytraced_pixels(Texel* pixels, Vertex* verts, int numTris, 
 
 		const float ar = 1;
 		const float zNear = 0;
-		const float zFar = -200;
+		const float zFar = -1500;
 		const float zRange = zNear - zFar;
 		//negative fov for -z facing camera
 		float tanHalfFOV = tanf((-2.0f)*(3.14159f / 180.0f));
@@ -1162,7 +1199,7 @@ __global__ void get_raytraced_pixels(Texel* pixels, Vertex* verts, int numTris, 
 
 		//END PERSPECTIVE MATRIX
 
-		RaytraceTris<1>(
+		RaytraceTris(
 			//image
 			&pixels[(y_int * WIDTH) + (x_int)]
 			//factor to keep old color
@@ -2642,8 +2679,10 @@ private:
 		//END TRI 5
 		*/
 
-		//pointer to pointer to vertData allows malloc()
-		int numVerts = OBJLoader::loadRawVertexList("Assets/cubey.obj", &vertData, 1.0f);
+		int numVerts = OBJLoader::loadRawVertexList("Assets/cubey.obj", &vertData, 1000.0f);
+		
+		vertData = (Vertex*)malloc(numVerts * sizeof(Vertex));
+		OBJLoader::loadVertices(vertData, numVerts);
 
 		NUM_TRIS = numVerts / 3;
 
@@ -2989,9 +3028,9 @@ private:
 			spheresChanged = true;
 #elif SHAPE_MODE == 0
 			vertsChanged = true;
-			vertData[12].pos[2] += (keys[0]) ? -speed : speed;
-			vertData[13].pos[2] += (keys[0]) ? -speed : speed;
-			vertData[14].pos[2] += (keys[0]) ? -speed : speed;
+			vertData[((NUM_TRIS - 1) * 3) + 0].pos[2] += (keys[0]) ? -speed : speed;
+			vertData[((NUM_TRIS - 1) * 3) + 1].pos[2] += (keys[0]) ? -speed : speed;
+			vertData[((NUM_TRIS - 1) * 3) + 2].pos[2] += (keys[0]) ? -speed : speed;
 #endif
 		}
 		if (keys[6] || keys[7]) {
@@ -3001,9 +3040,9 @@ private:
 			spheresChanged = true;
 #elif SHAPE_MODE == 0
 			vertsChanged = true;
-			vertData[12].pos[1] += (keys[6]) ? -speed : speed;
-			vertData[13].pos[1] += (keys[6]) ? -speed : speed;
-			vertData[14].pos[1] += (keys[6]) ? -speed : speed;
+			vertData[((NUM_TRIS - 1) * 3) + 0].pos[1] += (keys[6]) ? -speed : speed;
+			vertData[((NUM_TRIS - 1) * 3) + 1].pos[1] += (keys[6]) ? -speed : speed;
+			vertData[((NUM_TRIS - 1) * 3) + 2].pos[1] += (keys[6]) ? -speed : speed;
 #endif
 		}
 		if (keys[2] || keys[3]) {

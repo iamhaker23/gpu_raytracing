@@ -77,7 +77,7 @@ class OBJLoader {
 public:
 	
 	static int loadRawVertexList(const char * fileName, Vertex** vertData, float scale);
-
+	static void loadVertices(Vertex* vertData, int numVerts);
 private:
 
 	static void readTriangleFaceVertTexNorm(char *line, int matId);
@@ -87,6 +87,7 @@ private:
 	static int lookupMaterial(char *matName);
 	static void splitFrontString(char * inputString, char * frontString, char * restString, int size);
 
+	static std::vector<Vertex> m_distinctVerts;
 	static std::vector<vector3d> m_vVertices;
 	//an STL vector to hold vertex normals
 	static std::vector<vector3d> m_vNormals;
