@@ -37,8 +37,6 @@
 #include <chrono>
 #include <ctime>
 
-
-
 #include <algorithm>
 #include <array>
 #include <cstdlib>
@@ -66,17 +64,18 @@
 #include <cuda_runtime.h>
 #include <helper_cuda.h>
 
+#include "OBJLoader.h"
+
 #include "linmath.h"
 
 #define WIDTH 1024
 #define HEIGHT 1024
-#define SHAPE_MODE 1
+#define SHAPE_MODE 0
 
- //NOTE: only support power-of-two DRSD values (for maximimising GPU utilisation)
+ //NOTE: only support power-of-two DRSD values (for maximising GPU utilisation)
 //#define DEFERRED_REFRESH_SQUARE_DIM 1
 //#define DEFERRED_REFRESH_SQUARE_DIM 2
 #define DEFERRED_REFRESH_SQUARE_DIM 4
-
 
 //Enable vulkan validation (prints Vulkan validation errors in the console window)
 #define VULKAN_VALIDATION 0
@@ -312,36 +311,6 @@ struct IntersectionResult{
 	int faceDir = 0;
 };
 
-struct Vertex {
-	vec4 pos;
-	vec3 color;
-
-	static VkVertexInputBindingDescription getBindingDescription() {
-		VkVertexInputBindingDescription bindingDescription = {};
-
-		bindingDescription.binding = 0;
-		bindingDescription.stride = sizeof(Vertex);
-		bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-
-		return bindingDescription;
-	}
-
-	static std::array<VkVertexInputAttributeDescription, 2>
-		getAttributeDescriptions() {
-		std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions = {};
-		attributeDescriptions[0].binding = 0;
-		attributeDescriptions[0].location = 0;
-		attributeDescriptions[0].format = VK_FORMAT_B8G8R8A8_UNORM;
-		attributeDescriptions[0].offset = offsetof(Vertex, pos);
-
-		attributeDescriptions[1].binding = 0;
-		attributeDescriptions[1].location = 1;
-		attributeDescriptions[1].format = VK_FORMAT_B8G8R8A8_UNORM;
-		attributeDescriptions[1].offset = offsetof(Vertex, color);
-		return attributeDescriptions;
-	}
-};
-
 __device__ void mult(mat4x4 a, vec3 &vec) {
 
 	//|a b c d|
@@ -388,8 +357,6 @@ std::string execution_path;
 
 const int MAX_RAY_DEPTH = 3;
 //const int MAX_RAY_DEPTH = 4;
-
-
 
 __device__ void blendCol(Texel* col, float factor, float r, float g, float b) {
 
@@ -1221,7 +1188,11 @@ __global__ void get_raytraced_pixels(Texel* pixels, Vertex* verts, int numTris, 
 void* cudaSpheres;
 Sphere* spheres;
 const int NUM_SPHERES = 6;
-const int NUM_TRIS = 5;
+
+//const int NUM_TRIS = 5;
+
+int NUM_TRIS = 0;
+
 const int NUM_LIGHTS = 2;
 
 void* cudaVerts;
@@ -1586,7 +1557,7 @@ private:
 		createImageViews();
 		createRenderPass();
 		createDescriptorSetLayout();
-		createGraphicsPipeline();
+		//createGraphicsPipeline();
 		createFramebuffers();
 		createCommandPool();
 
@@ -2067,13 +2038,17 @@ private:
 		VkPipelineVertexInputStateCreateInfo vertexInputInfo = {};
 		vertexInputInfo.sType =
 			VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-		auto bindingDescription = Vertex::getBindingDescription();
-		auto attributeDescriptions = Vertex::getAttributeDescriptions();
+
+
+		//TODO: not
+		VkVertexInputBindingDescription bindingDescription; //= Vertex::getBindingDescription();
+		VkVertexInputAttributeDescription attributeDescriptions; //= Vertex::getAttributeDescriptions();
+
 		vertexInputInfo.vertexBindingDescriptionCount = 1;
 		vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
-		vertexInputInfo.vertexAttributeDescriptionCount =
-			static_cast<uint32_t>(attributeDescriptions.size());
-		vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
+		vertexInputInfo.vertexAttributeDescriptionCount = 1;
+			//static_cast<uint32_t>(attributeDescriptions.size());
+		vertexInputInfo.pVertexAttributeDescriptions = &attributeDescriptions;// .data();
 
 		VkPipelineInputAssemblyStateCreateInfo inputAssembly = {};
 		inputAssembly.sType =
@@ -2474,6 +2449,8 @@ private:
 		checkCudaErrors(cudaMemcpy(cudaSpheres, spheres, NUM_SPHERES * sizeof(Sphere), cudaMemcpyHostToDevice));
 
 #elif SHAPE_MODE == 0
+
+		/*
 		vertData = (Vertex*)malloc(3 * NUM_TRIS * sizeof(Vertex));
 
 		// BEGIN TRI 1
@@ -2663,10 +2640,16 @@ private:
 		vertData[14].color[2] = 1.0f;
 
 		//END TRI 5
+		*/
+
+		//pointer to pointer to vertData allows malloc()
+		int numVerts = OBJLoader::loadRawVertexList("Assets/cubey.obj", &vertData, 1.0f);
+
+		NUM_TRIS = numVerts / 3;
 
 		//Transfer vert data to GPU
-		checkCudaErrors(cudaMallocManaged((void**)&cudaVerts, 3 * NUM_TRIS * sizeof(Vertex), cudaMemAttachGlobal));
-		checkCudaErrors(cudaMemcpy(cudaVerts, vertData, 3 * NUM_TRIS * sizeof(Vertex), cudaMemcpyHostToDevice));
+		checkCudaErrors(cudaMallocManaged((void**)&cudaVerts, numVerts * sizeof(Vertex), cudaMemAttachGlobal));
+		checkCudaErrors(cudaMemcpy(cudaVerts, vertData, numVerts * sizeof(Vertex), cudaMemcpyHostToDevice));
 
 
 		//Initialise memory required to store intersection results
@@ -3765,9 +3748,13 @@ private:
 		for (auto imageView : swapChainImageViews) {
 			vkDestroyImageView(device, imageView, nullptr);
 		}
+		
+		/*
 		vkDestroyPipeline(device, graphicsPipeline, nullptr);
 		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+		*/
 		vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
+		
 		vkDestroyBuffer(device, uniformBuffer, nullptr);
 		vkFreeMemory(device, uniformBufferMemory, nullptr);
 		vkDestroyRenderPass(device, renderPass, nullptr);

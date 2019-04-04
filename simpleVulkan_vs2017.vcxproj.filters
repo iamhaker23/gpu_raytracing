@@ -5,6 +5,8 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="linmath.h" />
+    <ClInclude Include="OBJLoader.h" />
+    <ClInclude Include="Vertex.h" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="Shaders">
@@ -18,5 +20,8 @@
     <None Include="shader_sine.vert">
       <Filter>Shaders</Filter>
     </None>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="OBJLoader.cpp" />
   </ItemGroup>
 </Project>

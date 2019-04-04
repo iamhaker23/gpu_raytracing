@@ -51,10 +51,12 @@
     <OutDir>./bin/win64/$(Configuration)/</OutDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <CustomBuildBeforeTargets>Rebuild</CustomBuildBeforeTargets>
+    <CustomBuildBeforeTargets>
+    </CustomBuildBeforeTargets>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <CustomBuildBeforeTargets>Rebuild</CustomBuildBeforeTargets>
+    <CustomBuildBeforeTargets>
+    </CustomBuildBeforeTargets>
   </PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile>
@@ -116,12 +118,17 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="OBJLoader.h" />
+    <ClInclude Include="Vertex.h" />
     <CudaCompile Include="vulkanCUDASinewave.cu" />
     <ClInclude Include="linmath.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="shader_sine.frag" />
     <None Include="shader_sine.vert" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="OBJLoader.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
