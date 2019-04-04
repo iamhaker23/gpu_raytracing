@@ -62,15 +62,14 @@
 #define _USE_MATH_DEFINES
 #endif
 
-
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <helper_cuda.h>
 
 #include "linmath.h"
 
-#define WIDTH 512
-#define HEIGHT 512
+#define WIDTH 1024
+#define HEIGHT 1024
 #define SHAPE_MODE 0
 
  //NOTE: only support power-of-two DRSD values (for maximimising GPU utilisation)
@@ -306,6 +305,11 @@ __device__ float hasIntersection(Sphere sphere, vec3 &rayorig, vec3 &raydir, flo
 	return true;
 }
 
+struct IntersectionResult{
+	vec4 pos = { 0 };
+	vec4 col = { 0 };
+	int triIndex = -1;
+};
 
 struct Vertex {
 	vec4 pos;
@@ -428,263 +432,177 @@ __device__ void setCol(Texel* col, float r, float g, float b) {
 	//col->col[3] = 0xFFFFFFFF;
 }
 
+__device__ void intersectTris(int depth, Vertex* verts, IntersectionResult* outhit, float factor, int numTris, mat4x4 persp, float orig_x, float orig_y, float orig_z, float ray_x, float ray_y, float ray_z, float maxDist) {
 
-__device__ int intersectTris(int depth, Vertex* verts, Texel* col, float factor, int numTris, mat4x4 persp, float orig_x, float orig_y, float orig_z, float ray_x, float ray_y, float ray_z, float maxDist) {
+	//reset output
+	outhit->pos[0] = 0;
+	outhit->pos[1] = 0;
+	outhit->pos[2] = 0;
+	outhit->col[0] = 0;
+	outhit->col[1] = 0;
+	outhit->col[2] = 0;
+	outhit->triIndex = -1;
 
-	//02/04 - known bugs
-	// - slow!
-	// - messy code!
-	//TODO: reorganise priorities, refactor project and use better data structures
-	// BVH -> ibo -> vbo
-	// Matrix: mult, add
-	// vector4: dot, cross, reflect, normalize
-	// initialise CUDA memory for better data structures! Currently: cudaSpheres, cudaVertData
-
-	//vec4* intersectAreas = (vec4*)malloc(sizeof(vec4));
-	//*intersectAreas[0] = -1.0f;
-	//*intersectAreas[1] = -1.0f;
-	//*intersectAreas[2] = -1.0f;
-	//*intersectAreas[3] = -1.0f;
-
-	float minbary1 = 0.0f;
-	float minbary2 = 0.0f;
-	float minbary3 = 0.0f;
-	float minDist = 99999999.0f;
+	float minU = -1.0f;
+	float minV = -1.0f;
+	float minT = 99999999.0f;
 	int closestTri = -1;
 
-	int i = 0;
-	for (int i = 0; i < 2; i++) {
-		//TODO: ensure the tri hit is the closest to the ray origin
-		//TODO: actual lights instead of assuming last triangle as light source
-		for (int tri = 0; tri < numTris * 3; tri += 3) {
-
-			vec3 sspA = { 0 };
-			vec3 sspB = { 0 };
-			vec3 sspC = { 0 };
-
-			//TODO: check both forward and back face (just switching is not working!)
-			//TRY:
-			//1. can barycentric co-ordinates be obtained for backface (e.g. need to flip the directionality of the verts)
-			//2. *BEST* use the original signed area approach for visibility and calculate barycentric co-ords for the outputs not using them for visibility
-
-			//Moller-Trumbore
-			//V1
-			//V2
-			//V3
-			//RayOrigin
-			//RayDir
-			//Edge1 = V2-v1
-			//Edge2 = V3-V1
-			//h=raydir.cross(Edge2)
-			//A=Edge1.dot(h)
-			//IF A < Epsilon &&  A > -Epsilon (no hit)
-			//s=rayOrigin-V1
-			//U=s.dot(h)/A
-			//IF U < 0.0 || U > 1.0 (no hit)
-			//Q=s.cross(Edge1)
-			//V=raydir.dot(Q)/A
-			//IF V < 0.0 || U+V > 1.0 (no hit)
-			//t=edge2.dot(Q)/A
-			//IF t > Epsilon (hit, return RayOrigin+RayDir*t)
-			//ELSE no hit
-
-			sspA[0] = verts[tri + ((i == 0) ? 0 : 2)].pos[0] - orig_x;
-			sspA[1] = verts[tri + ((i == 0) ? 0 : 2)].pos[1] - orig_y;
-			sspA[2] = verts[tri + ((i == 0) ? 0 : 2)].pos[2] - orig_z;
-
-			sspB[0] = verts[tri + ((i == 0) ? 1 : 1)].pos[0] - orig_x;
-			sspB[1] = verts[tri + ((i == 0) ? 1 : 1)].pos[1] - orig_y;
-			sspB[2] = verts[tri + ((i == 0) ? 1 : 1)].pos[2] - orig_z;
-
-			sspC[0] = verts[tri + ((i == 0) ? 2 : 0)].pos[0] - orig_x;
-			sspC[1] = verts[tri + ((i == 0) ? 2 : 0)].pos[1] - orig_y;
-			sspC[2] = verts[tri + ((i == 0) ? 2 : 0)].pos[2] - orig_z;
-
-			vec3 raydir = { 0 };
-			raydir[0] = ray_x;
-			raydir[1] = ray_y;
-			raydir[2] = ray_z;
-
-			float raydirmag = magnitude(raydir);
-			raydir[0] = raydir[0] / raydirmag;
-			raydir[1] = raydir[1] / raydirmag;
-			raydir[2] = raydir[2] / raydirmag;
+	vec3 raydir = { 0 };
+	raydir[0] = ray_x;
+	raydir[1] = ray_y;
+	raydir[2] = ray_z;
+	float Epsilon = 0.001f;
 
 
-			if (sspA[2] > 0) sspA[2] = -1.0f;
-			if (sspB[2] > 0) sspB[2] = -1.0f;
-			if (sspC[2] > 0) sspC[2] = -1.0f;
-			if (sspA[2] == -1.0f && sspB[2] == -1.0f && sspC[2] == -1.0f) continue;
+	for (int tri = 0; tri < numTris * 3; tri += 3) {
 
-			/*
+		//Moller-Trumbore
+		//V1
+		//V2
+		//V3
+		//RayOrigin
+		//RayDir
 
-			// START INVERSE ROTATION TO ALIGN WITH z-axis
-			//rodrigues rotation formula (with 1-cos(theta) substitution)
+		vec3 V1 = { 0 };
+		vec3 V2 = { 0 };
+		vec3 V3 = { 0 };
 
-			//TODO: lines appear at x=0 and y=0!!!
-			if (raydir[0] != 0.0f && raydir[1] != 0.0f) {
+		V1[0] = verts[tri + 0].pos[0];
+		V1[1] = verts[tri + 0].pos[1];
+		V1[2] = verts[tri + 0].pos[2];
 
-				vec3 rayToZ = { 0 };
-				vec3 z = { 0 };
-				z[2] = -1;
+		V2[0] = verts[tri + 1].pos[0];
+		V2[1] = verts[tri + 1].pos[1];
+		V2[2] = verts[tri + 1].pos[2];
 
-				rayToZ[0] = cross(0, raydir, z);
-				rayToZ[1] = cross(1, raydir, z);
-				rayToZ[2] = cross(2, raydir, z);
+		V3[0] = verts[tri + 2].pos[0];
+		V3[1] = verts[tri + 2].pos[1];
+		V3[2] = verts[tri + 2].pos[2];
 
-				float rayToZMag = magnitude(rayToZ);
+		/*
+		if (depth == 1) {
+			mult(persp, V1);
+			mult(persp, V2);
+			mult(persp, V3);
+			mult(persp, raydir);
+		}
+		*/
 
-				rayToZ[0] = rayToZ[0] / rayToZMag;
-				rayToZ[1] = rayToZ[1] / rayToZMag;
-				rayToZ[2] = rayToZ[2] / rayToZMag;
+		/* //IF ALL VERTS ARE BEHIND CAMERA
+		if (V1[2] > 0) V1[2] = -1.0f;
+		if (V2[2] > 0) V2[2] = -1.0f;
+		if (V3[2] > 0) V3[2] = -1.0f;
+		if (V1[2] == -1.0f && V2[2] == -1.0f && V3[2] == -1.0f) continue;
+		*/
 
-				//float angleToZ = asin((3.14159f / 180.0f)*rayToZMag);// *magnitude(rayToZ));
-				float angleToZ = acos((3.14159f / 180.0f)*dot(raydir, z));
+		//Edge1 = V2-v1
+		//Edge2 = V3-V1
+		//h=raydir.cross(Edge2)
+		//A=Edge1.dot(h)
+		//IF A < Epsilon &&  A > -Epsilon (no hit)
 
-				// I  + Csin(theta) + C*C*(1-cos(theta))
-				// or
-				// I + Csin(theta) + C*C*(2*sin^2(theta/2))
-				//expanded rodrigues formula
-				mat4x4 rot = { 0 };
+		vec3 edge1 = { 0 };
+		edge1[0] = V2[0] - V1[0];
+		edge1[1] = V2[1] - V1[1];
+		edge1[2] = V2[2] - V1[2];
 
-				//float mew = 1 - cos(angleToZ);
-				float beta = sin(angleToZ);
-				float sinht = sin(0.5f*angleToZ * (3.14159f / 180));
-				float mew = sinht * sinht*2.0f;
+		vec3 edge2 = { 0 };
+		edge2[0] = V3[0] - V1[0];
+		edge2[1] = V3[1] - V1[1];
+		edge2[2] = V3[2] - V1[2];
 
+		vec3 h = { 0 };
+		h[0] = cross(0, raydir, edge2);
+		h[1] = cross(1, raydir, edge2);
+		h[2] = cross(2, raydir, edge2);
 
-				float ax = rayToZ[0];
-				float ay = rayToZ[1];
-				float az = rayToZ[2];
+		float A = dot(edge1, h);
 
-				//row1
-				rot[0][0] = mew * (0 + -az * az + -ay * ay) + 1;
-				rot[0][1] = beta * (-az) + mew * (0 + 0 + ay * ax);
-				rot[0][2] = beta * (ay)+mew * (0 + -az * -ax + 0);
+		//nohit
+		if (A < Epsilon && A > -Epsilon) continue;
 
-				//row2
-				rot[1][0] = beta * (az)+mew * (0 + 0 + -ax * -ay);
-				rot[1][1] = mew * (-az * az + 0 + -ax * ax) + 1;
-				rot[1][2] = beta * (-ax) + mew * (az*ay + 0 + 0);
+		//s=rayOrigin-V1
+		//U=s.dot(h)/A
+		//IF U < 0.0 || U > 1.0 (no hit)
 
-				//row3
-				rot[2][0] = beta * (-ay) + mew * (0 + az * ax + 0);
-				rot[2][1] = beta * (ax)+mew * (-ay * -az + 0 + 0);
-				rot[2][2] = mew * (-ay * ay + -ax * ax + 0) + 1;
+		vec3 s = { 0 };
+		s[0] = orig_x - V1[0];
+		s[1] = orig_y - V1[1];
+		s[2] = orig_z - V1[2];
 
-				rot[3][3] = 1;
+		float U = dot(s, h) / A;
 
-				mult(rot, sspA);
-				mult(rot, sspB);
-				mult(rot, sspC);
-				mult(rot, raydir);
-			}
+		if (U < 0.0f || U > 1.0f) continue;
 
-			// END INVERSE ROTATION TO ALIGN WITH z-axis
-			*/
+		//Q=s.cross(Edge1)
+		//V=raydir.dot(Q)/A
+		//IF V < 0.0 || U+V > 1.0 (no hit)
 
-			//force perspective since the approach does not account for z dist
-			//if (depth == 1) {
-			//	mult(persp, sspA);
-			//	mult(persp, sspB);
-			//	mult(persp, sspC);
-			//	mult(persp, raydir);
-			//}
+		vec3 Q = { 0 };
+		Q[0] = cross(0, s, edge1);
+		Q[1] = cross(1, s, edge1);
+		Q[2] = cross(2, s, edge1);
 
+		float V = dot(raydir, Q) / A;
 
-			//Parallelogram matrix determinant magic provides
-			//a shortcut to calculate the signed area ->
-			//0.5f * (x2-x1)(y3-y2)-(x3-x2)(y2-y1)
+		if (V < 0.0 || U + V > 1.0) continue;
 
-			//a->b
-			float sgnArea1 = 0.5f*((sspB[0] - sspA[0])*(raydir[1] - sspB[1])
-				- (raydir[0] - sspB[0])*(sspB[1] - sspA[1]));
-			//float sgnArea1 = 0.5f*((sspB[0] - sspA[0])*(0 - sspB[1])
-			//		- (0 - sspB[0])*(sspB[1] - sspA[1]));
+		//t=edge2.dot(Q)/A
+		//IF t > Epsilon (hit, return RayOrigin+RayDir*t)
+		//ELSE no hit
+		float t = dot(edge2, Q) / A;
+		if (t > Epsilon) {
 
-			if (sgnArea1 > 0.0f) {
-
-				//b->c
-				float sgnArea2 = 0.5f*((sspC[0] - sspB[0])*(raydir[1] - sspC[1])
-					- (raydir[0] - sspC[0])*(sspC[1] - sspB[1]));
-				//float sgnArea2 = 0.5f*((sspC[0] - sspB[0])*(0 - sspC[1])
-				//- (0 - sspC[0])*(sspC[1] - sspB[1]));
-
-				if (sgnArea2 > 0.0f) {
-
-					//c->a
-					float sgnArea3 = 0.5f*((sspA[0] - sspC[0])*(raydir[1] - sspA[1])
-						- (raydir[0] - sspA[0])*(sspA[1] - sspC[1]));
-
-					//float sgnArea3 = 0.5f*((sspA[0] - sspC[0])*(0 - sspA[1])
-					//	- (0 - sspA[0])*(sspA[1] - sspC[1]));
-
-					if (sgnArea3 > 0.0f) {
-						/*
-						vec3 v0 = { 0 };
-						v0[0] = sspB[0] - sspA[0];
-						v0[1] = sspB[1] - sspA[1];
-						//v0[2] = sspB[2] - sspA[2];
-						//b - a;
-
-						vec3 v1 = { 0 };
-						v1[0] = sspC[0] - sspA[0];
-						v1[1] = sspC[1] - sspA[1];
-						//v1[2] = sspC[2] - sspA[2];
-						//c - a;
-
-						vec3 v2 = { 0 };
-						v2[0] = (raydir[0]) - sspA[0];
-						v2[1] = (raydir[1]) - sspA[1];
-						//v2[2] = (raydir[2]) - sspA[2];
-						//p - a;
-
-						float d00 = dot(v0, v0);
-						float d01 = dot(v0, v1);
-						float d11 = dot(v1, v1);
-						float d20 = dot(v2, v0);
-						float d21 = dot(v2, v1);
-						float denom = d00 * d11 - d01 * d01;
-						float bary1 = (d11 * d20 - d01 * d21) / denom;
-						float bary2 = (d00 * d21 - d01 * d20) / denom;
-						float bary3 = 1.0f - bary1 - bary2;
-						*/
-
-						float totalSgn = sgnArea1 + sgnArea2 + sgnArea3;
-						float bary1 = sgnArea1 / totalSgn;
-						float bary2 = sgnArea2 / totalSgn;
-						float bary3 = sgnArea3 / totalSgn;
-
-						//vec3 dist = { 0 };
-						//dist[0] = ( ((bary1*verts[tri].pos[0]) + (bary2 * verts[tri + 1].pos[0]) + (bary3 * verts[tri + 2].pos[0])) )- orig_x;
-						//dist[1] = ( ((bary1*verts[tri].pos[1]) + (bary2 * verts[tri + 1].pos[1]) + (bary3 * verts[tri + 2].pos[1])) )- orig_y;
-						//dist[2] = ( ((bary1*verts[tri].pos[2]) + (bary2 * verts[tri + 1].pos[2]) + (bary3 * verts[tri + 2].pos[2])) )- orig_z;
-						//float distZ = magnitude(dist);
-						float distZ = (((bary1*verts[tri + 1].pos[2]) + (bary2 * verts[tri + 2].pos[2]) + (bary3 * verts[tri + 0].pos[2]))) - orig_z;
-						distZ = abs(distZ);
-						//if this hit point is the new closest, and is allowed
-						if (distZ < minDist && (maxDist < 0 || distZ < maxDist)) {
-							minDist = distZ;
-							minbary1 = bary1;
-							minbary2 = bary2;
-							minbary3 = bary3;
-							closestTri = tri;
-						}
-					}
-				}
+			if (t < minT) {
+				minT = t;
+				minU = U;
+				minV = V;
+				closestTri = tri;
 			}
 		}
+
 	}
 
+	if (closestTri >= 0){
+		outhit->pos[0] = orig_x + (minT * ray_x);
+		outhit->pos[1] = orig_y + (minT * ray_y);
+		outhit->pos[2] = orig_z + (minT * ray_z);
 
-	//Store weights temporarily in col
-	setCol(col,
-		255 * minbary1,//(sgnArea1 / totalArea),
-		255 * minbary2,//(sgnArea2 / totalArea),
-		255 * minbary3//(sgnArea3 / totalArea)
-	);
+		outhit->col[0] =
+			(verts[closestTri + 0].color[0] * (1.0 - minV - minU)) +
+			(verts[closestTri + 1].color[0] * minV) +
+			(verts[closestTri + 2].color[0] * minU);
 
-	return closestTri;
+		outhit->col[1] =
+			(verts[closestTri + 0].color[1] * (1.0 - minV - minU)) +
+			(verts[closestTri + 1].color[1] * minV) +
+			(verts[closestTri + 2].color[1] * minU);
+
+		outhit->col[2] =
+			(verts[closestTri + 0].color[2] * (1.0 - minV - minU)) +
+			(verts[closestTri + 1].color[2] * minV) +
+			(verts[closestTri + 2].color[2] * minU);
+
+		outhit->triIndex = closestTri;
+	}
+	/*
+		outhit->pos[0] =
+			(verts[closestTri + 0].pos[0] * (1.0 - minV - minU)) +
+			(verts[closestTri + 1].pos[0] * minV) +
+			(verts[closestTri + 2].pos[0] * minU)
+			;
+		outhit->pos[1] =
+			(verts[closestTri + 0].pos[1] * (1.0 - minV - minU)) +
+			(verts[closestTri + 1].pos[1] * minV) +
+			(verts[closestTri + 2].pos[1] * minU)
+			;
+		outhit->pos[2] =
+			(verts[closestTri + 0].pos[2] * (1.0 - minV - minU)) +
+			(verts[closestTri + 1].pos[2] * minV) +
+			(verts[closestTri + 2].pos[2] * minU)
+			;
+	*/
 }
 
 #if SHAPE_MODE==0
@@ -696,13 +614,16 @@ __device__ void RaytraceTris(Texel* col
 	, int numTris
 	, float ray_x, float ray_y, float ray_z
 	, float orig_x, float orig_y, float orig_z
-	, mat4x4 &persp)
+	, mat4x4 &persp
+	, IntersectionResult* hitlist)
 {
+	
+	intersectTris(1, verts, hitlist, factor, numTris, persp, orig_x, orig_y, orig_z, ray_x, ray_y, ray_z, -1.0f);
 
-	int tri = intersectTris(1, verts, col, factor, numTris, persp, orig_x, orig_y, orig_z, ray_x, ray_y, ray_z, -1.0f);
+	int tri = hitlist->triIndex;
 
-	if (tri == -1) {
-		blendCol(col, factor, 200, 210, 250);
+	if (tri < 0) {
+		blendCol(col, factor, 150, 160, 200);
 	}
 	else {
 
@@ -712,55 +633,24 @@ __device__ void RaytraceTris(Texel* col
 		}
 		else {
 
-
-			vec3 diffCol = { 0 };
-
-			diffCol[0] =
-				(verts[tri + 1].color[0] * (col->col[0] / 255.0f)) +
-				(verts[tri + 2].color[0] * (col->col[1] / 255.0f)) +
-				(verts[tri + 0].color[0] * (col->col[2] / 255.0f));
-
-			diffCol[1] =
-				(verts[tri + 1].color[1] * (col->col[0] / 255.0f)) +
-				(verts[tri + 2].color[1] * (col->col[1] / 255.0f)) +
-				(verts[tri + 0].color[1] * (col->col[2] / 255.0f));
-
-			diffCol[2] =
-				(verts[tri + 1].color[2] * (col->col[0] / 255.0f)) +
-				(verts[tri + 2].color[2] * (col->col[1] / 255.0f)) +
-				(verts[tri + 0].color[2] * (col->col[2] / 255.0f));
-
-			vec3 hitPos = { 0 };
-
-			hitPos[0] =
-				(verts[tri + 1].pos[0] * (col->col[0] / 255.0f)) +
-				(verts[tri + 2].pos[0] * (col->col[1] / 255.0f)) +
-				(verts[tri + 0].pos[0] * (col->col[2] / 255.0f))
-				;
-			hitPos[1] =
-				(verts[tri + 1].pos[1] * (col->col[0] / 255.0f)) +
-				(verts[tri + 2].pos[1] * (col->col[1] / 255.0f)) +
-				(verts[tri + 0].pos[1] * (col->col[2] / 255.0f))
-				;
-			hitPos[2] =
-				(verts[tri + 1].pos[2] * (col->col[0] / 255.0f)) +
-				(verts[tri + 2].pos[2] * (col->col[1] / 255.0f)) +
-				(verts[tri + 0].pos[2] * (col->col[2] / 255.0f))
-				;
-
+			setCol(col
+				, 255 * verts[tri].color[0]
+				, 255 * verts[tri].color[1]
+				, 255 * verts[tri].color[2]);
+			return;
 
 			// START NORMAL-ORIENTED BIAS
 			vec3 nnhit = { 0 };
 
 			vec3 ab = { 0 };
-			ab[0] = verts[tri + 1].pos[0] - hitPos[0]; //- verts[tri + 0].pos[0];
-			ab[1] = verts[tri + 1].pos[1] - hitPos[1]; //- verts[tri + 0].pos[1];
-			ab[2] = verts[tri + 1].pos[2] - hitPos[2]; //- verts[tri + 0].pos[2];
+			ab[0] = verts[tri + 1].pos[0] - hitlist->pos[0]; //- verts[tri + 0].pos[0];
+			ab[1] = verts[tri + 1].pos[1] - hitlist->pos[1]; //- verts[tri + 0].pos[1];
+			ab[2] = verts[tri + 1].pos[2] - hitlist->pos[2]; //- verts[tri + 0].pos[2];
 
 			vec3 ac = { 0 };
-			ac[0] = verts[tri + 2].pos[0] - hitPos[0]; // - verts[tri + 0].pos[0];
-			ac[1] = verts[tri + 2].pos[1] - hitPos[1]; //- verts[tri + 0].pos[1];
-			ac[2] = verts[tri + 2].pos[2] - hitPos[2]; //- verts[tri + 0].pos[2];
+			ac[0] = verts[tri + 2].pos[0] - hitlist->pos[0]; // - verts[tri + 0].pos[0];
+			ac[1] = verts[tri + 2].pos[1] - hitlist->pos[1]; //- verts[tri + 0].pos[1];
+			ac[2] = verts[tri + 2].pos[2] - hitlist->pos[2]; //- verts[tri + 0].pos[2];
 
 			nnhit[0] = cross(0, ab, ac);
 			nnhit[1] = cross(1, ab, ac);
@@ -774,50 +664,24 @@ __device__ void RaytraceTris(Texel* col
 			// END NORMAL-ORIENTED BIAS
 
 			vec3 ld = { 0 };
-			ld[0] = verts[3 * (numTris - 1)].pos[0] - hitPos[0];
-			ld[1] = verts[3 * (numTris - 1)].pos[1] - hitPos[1];
-			ld[2] = verts[3 * (numTris - 1)].pos[2] - hitPos[2];
+			ld[0] = verts[3 * (numTris - 1)].pos[0] - hitlist->pos[0];
+			ld[1] = verts[3 * (numTris - 1)].pos[1] - hitlist->pos[1];
+			ld[2] = verts[3 * (numTris - 1)].pos[2] - hitlist->pos[2];
 
 			float ldmag = magnitude(ld);
-			float lightZ = abs(ld[2]);
 			vec3 nld = { 0 };
 			nld[0] = ld[0] / ldmag;
 			nld[1] = ld[1] / ldmag;
 			nld[2] = ld[2] / ldmag;
+			
+			float m = max(0.05f, dot(nld, nnhit));
 
-			int shadowCaster = intersectTris(2, verts, col, 1.0f, numTris, persp
-				, hitPos[0] + nnhit[0] * 1e-3
-				, hitPos[1] + nnhit[1] * 1e-3
-				, hitPos[2] + nnhit[2] * 1e-3
-				, ld[0]
-				, ld[1]
-				, ld[2]
-				, lightZ);
-				//, nldmag);
+			setCol(col
+				, 255 * hitlist->col[0] * verts[3 * (numTris - 1)].color[0] * m
+				, 255 * hitlist->col[1] * verts[3 * (numTris - 1)].color[1] * m
+				, 255 * hitlist->col[2] * verts[3 * (numTris - 1)].color[2] * m);
 
-			//no shadow if light, self or nothing
-			float m = (shadowCaster != -1 && shadowCaster != 3 * (numTris - 1) && shadowCaster != tri) ? 0.0f : max(0.1f, dot(nld, nnhit));
-
-			//TODO: specular lighting
-			//V = -raydir
-			//R = 2*N*dot(N, L) - L
-			//r_dot_v = dot(R, V)
-			//if r_dot_v > 0
-			//m = light.intensity*pow(r_dot_v / (length(R)*length(V)), s));
-
-			if (m > 0.0f) {
-				setCol(col
-					, 255 * diffCol[0] * verts[3 * (numTris - 1)].color[0] * m
-					, 255 * diffCol[1] * verts[3 * (numTris - 1)].color[1] * m
-					, 255 * diffCol[2] * verts[3 * (numTris - 1)].color[2] * m);
-			}
-			else {
-				//TODO: remove this shadow debugging which colors shadow according to caster
-				setCol(col
-					, 255 * verts[shadowCaster].color[0]
-					, 255 * verts[shadowCaster].color[1]
-					, 255 * verts[shadowCaster].color[2]);
-			}
+			//TODO: shadows/specular lighting
 
 		}
 	}
@@ -830,7 +694,8 @@ __device__ void RaytraceTris<MAX_RAY_DEPTH>(Texel* col
 	, int numTris
 	, float ray_x, float ray_y, float ray_z
 	, float orig_x, float orig_y, float orig_z
-	, mat4x4 &persp)
+	, mat4x4 &persp
+	, IntersectionResult* hitlist)
 {
 	return;
 }
@@ -1162,10 +1027,12 @@ __global__ void update_vertex_data(Vertex* verts, int numTris) {
 }
 */
 
-__global__ void get_raytraced_pixels(Texel* pixels, Vertex* verts, int numTris, Sphere* spheres, int numSpheres, float cam_x, float cam_y, float cam_z, int frame, int squareDim, float factor) {
+__global__ void get_raytraced_pixels(Texel* pixels, Vertex* verts, int numTris, Sphere* spheres, int numSpheres, float cam_x, float cam_y, float cam_z, int frame, int squareDim, float factor, IntersectionResult* hitlist) {
 
-	unsigned int x_int = (blockIdx.x * blockDim.x + threadIdx.x) * squareDim;
-	unsigned int y_int = (blockIdx.y * blockDim.y + threadIdx.y) * squareDim;
+	unsigned int raw_x = (blockIdx.x * blockDim.x + threadIdx.x);
+	unsigned int raw_y = (blockIdx.y * blockDim.y + threadIdx.y);
+	unsigned int x_int = raw_x * squareDim;
+	unsigned int y_int = raw_y * squareDim;
 
 	//frame patterns:
 	/*
@@ -1251,10 +1118,10 @@ __global__ void get_raytraced_pixels(Texel* pixels, Vertex* verts, int numTris, 
 
 		const float ar = 1;
 		const float zNear = 0;
-		const float zFar = -1000;
+		const float zFar = -200;
 		const float zRange = zNear - zFar;
 		//negative fov for -z facing camera
-		float tanHalfFOV = tanf((-10.0f)*(3.14159f / 180.0f));
+		float tanHalfFOV = tanf((-2.0f)*(3.14159f / 180.0f));
 
 		persp[0][0] = 1.0f / (tanHalfFOV * ar);
 		persp[0][1] = 0.0f;
@@ -1290,6 +1157,8 @@ __global__ void get_raytraced_pixels(Texel* pixels, Vertex* verts, int numTris, 
 			//cam pos
 			, cam_x + (WIDTH / -2.0f), cam_y + (HEIGHT / -2.0f), cam_z + 3000
 			, persp
+			, &hitlist[(raw_y * (WIDTH/(squareDim))) + (raw_x)]
+			//, &hitlist[(y_int * WIDTH) + (x_int)]
 			);
 	}
 
@@ -1297,15 +1166,19 @@ __global__ void get_raytraced_pixels(Texel* pixels, Vertex* verts, int numTris, 
 
 ////END RAYTRACING
 
-//Global to program
+//HOST globals
+void* cudaSpheres;
 Sphere* spheres;
 const int NUM_SPHERES = 6;
 const int NUM_TRIS = 5;
 const int NUM_LIGHTS = 2;
 
-void* cudaSpheres;
 void* cudaVerts;
 Vertex* vertData;
+
+void* cudaHitList;
+IntersectionResult* hitListData;
+
 //Player State
 bool spheresChanged;
 bool vertsChanged;
@@ -1455,8 +1328,10 @@ private:
 	bool loadFromFile = true;
 	VkImage textureImage;
 	VkDeviceMemory textureImageMemory;
+
 	VkBuffer stagingBuffer;
 	VkDeviceMemory stagingBufferMemory;
+
 	stbi_uc* pixels;
 
 	size_t vertexBufSize = 0;
@@ -1481,7 +1356,7 @@ private:
 	cudaExternalSemaphore_t cudaExtCudaUpdateVkVertexBufSemaphore;
 	cudaExternalSemaphore_t cudaExtVkUpdateCudaVertexBufSemaphore;
 	void* cudaDevPixelptr = NULL;
-	void* cudaDevVertptr = NULL;
+	void* cudaDevIntersectResultsptr = NULL;
 	cudaStream_t streamToRun;
 
 	bool checkValidationLayerSupport() {
@@ -2461,10 +2336,7 @@ private:
 	void cudaInitVertexMem() {
 		checkCudaErrors(cudaStreamCreate(&streamToRun));
 
-		//dim3 block(16, 16, 1);
-		//dim3 grid(WIDTH / 16, HEIGHT / 16, 1);
-
-
+#if SHAPE_MODE == 1
 		vec3 c, sc, ec;
 		c[0] = -400.0f; c[1] = 0.0f; c[2] = -6500.0f;
 
@@ -2550,6 +2422,7 @@ private:
 		checkCudaErrors(cudaMallocManaged((void**)&cudaSpheres, NUM_SPHERES * sizeof(Sphere), cudaMemAttachGlobal));
 		checkCudaErrors(cudaMemcpy(cudaSpheres, spheres, NUM_SPHERES * sizeof(Sphere), cudaMemcpyHostToDevice));
 
+#elif SHAPE_MODE == 0
 		vertData = (Vertex*)malloc(3 * NUM_TRIS * sizeof(Vertex));
 
 		// BEGIN TRI 1
@@ -2740,8 +2613,33 @@ private:
 
 		//END TRI 5
 
+		//Transfer vert data to GPU
 		checkCudaErrors(cudaMallocManaged((void**)&cudaVerts, 3 * NUM_TRIS * sizeof(Vertex), cudaMemAttachGlobal));
 		checkCudaErrors(cudaMemcpy(cudaVerts, vertData, 3 * NUM_TRIS * sizeof(Vertex), cudaMemcpyHostToDevice));
+
+
+		//Initialise memory required to store intersection results
+		size_t hitlistSize = (WIDTH * HEIGHT * sizeof(IntersectionResult)) / ((DEFERRED_REFRESH_SQUARE_DIM)*(DEFERRED_REFRESH_SQUARE_DIM));
+		//size_t hitlistSize = (WIDTH * HEIGHT * sizeof(IntersectionResult));
+
+		hitListData = (IntersectionResult*)malloc(hitlistSize);
+
+		//Allocate memory for intersection result list
+		checkCudaErrors(cudaMallocManaged(
+			(void**)&cudaHitList
+			, hitlistSize
+			, cudaMemAttachGlobal));
+
+		checkCudaErrors(cudaMemcpy(
+			cudaHitList
+			, hitListData
+			//Only need as many intersection results as will be used in each CUDA call (e.g. deferred refresh sub-frames)
+			, hitlistSize
+			, cudaMemcpyHostToDevice));
+			
+		
+#endif
+
 
 		checkCudaErrors(cudaStreamSynchronize(streamToRun));
 	}
@@ -3490,7 +3388,7 @@ private:
 		cudaExternalMemoryHandleDesc cudaExtMemHandleDesc;
 		memset(&cudaExtMemHandleDesc, 0, sizeof(cudaExtMemHandleDesc));
 
-		//Import spheres
+		//Get handle
 #ifdef _WIN64
 		cudaExtMemHandleDesc.type =
 			IsWindows8OrGreater() ? cudaExternalMemoryHandleTypeOpaqueWin32
@@ -3527,6 +3425,13 @@ private:
 		//Maps a buffer onto the "external memory object"
 		checkCudaErrors(cudaExternalMemoryGetMappedBuffer(
 			&cudaDevPixelptr, cudaExtMemPixelBuffer, &cudaExtBufferDesc));
+
+
+		// START IMPORT INTERSECTION RESULTS
+
+
+
+		//END IMPORT INTERSECTION RESULTS
 
 		printf("CUDA Imported Vulkan pixel buffer\n");
 	}
@@ -3750,7 +3655,8 @@ private:
 				, cam_z
 				, frameStep
 				, DEFERRED_REFRESH_SQUARE_DIM
-				, 1.0f);
+				, 1.0f
+				,(IntersectionResult*)cudaHitList);
 
 			//keep count of what sub-frame is being rendered
 			if (frameStep != 0) {
@@ -3787,6 +3693,10 @@ private:
 			checkCudaErrors(cudaFree(cudaVerts));
 		#endif
 		*/
+
+		free(vertData);
+		free(hitListData);
+
 
 		vkDestroyBuffer(device, stagingBuffer, nullptr);
 		vkFreeMemory(device, stagingBufferMemory, nullptr);
