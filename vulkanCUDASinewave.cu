@@ -70,7 +70,7 @@
 
 #define WIDTH 1024
 #define HEIGHT 1024
-#define SHAPE_MODE 0
+#define SHAPE_MODE 1
 
  //NOTE: only support power-of-two DRSD values (for maximimising GPU utilisation)
 //#define DEFERRED_REFRESH_SQUARE_DIM 1
@@ -309,6 +309,7 @@ struct IntersectionResult{
 	vec4 pos = { 0 };
 	vec4 col = { 0 };
 	int triIndex = -1;
+	int faceDir = 0;
 };
 
 struct Vertex {
@@ -433,8 +434,8 @@ __device__ void setCol(Texel* col, float r, float g, float b) {
 }
 
 __device__ void intersectTris(int depth, Vertex* verts, IntersectionResult* outhit, float factor, int numTris, mat4x4 persp, float orig_x, float orig_y, float orig_z, float ray_x, float ray_y, float ray_z, float maxDist) {
-
-	//reset output
+	
+	//Important: reset output, or will persist old hit info in the event of a miss
 	outhit->pos[0] = 0;
 	outhit->pos[1] = 0;
 	outhit->pos[2] = 0;
@@ -442,10 +443,12 @@ __device__ void intersectTris(int depth, Vertex* verts, IntersectionResult* outh
 	outhit->col[1] = 0;
 	outhit->col[2] = 0;
 	outhit->triIndex = -1;
-
+	outhit->faceDir = 0;
+	
 	float minU = -1.0f;
 	float minV = -1.0f;
 	float minT = 99999999.0f;
+	int faceDir = 0;
 	int closestTri = -1;
 
 	vec3 raydir = { 0 };
@@ -519,8 +522,13 @@ __device__ void intersectTris(int depth, Vertex* verts, IntersectionResult* outh
 
 		float A = dot(edge1, h);
 
+//#ifdef CULLING 
+		//if (A < Epsilon) continue;
+//#else 
 		//nohit
 		if (A < Epsilon && A > -Epsilon) continue;
+//#endif
+
 
 		//s=rayOrigin-V1
 		//U=s.dot(h)/A
@@ -554,11 +562,13 @@ __device__ void intersectTris(int depth, Vertex* verts, IntersectionResult* outh
 		float t = dot(edge2, Q) / A;
 		if (t > Epsilon) {
 
-			if (t < minT) {
+			if (t < minT && (maxDist < 0 || t < maxDist)) {
 				minT = t;
 				minU = U;
 				minV = V;
 				closestTri = tri;
+
+				faceDir = (A < Epsilon) ? -1 : 1;
 			}
 		}
 
@@ -585,6 +595,7 @@ __device__ void intersectTris(int depth, Vertex* verts, IntersectionResult* outh
 			(verts[closestTri + 2].color[2] * minU);
 
 		outhit->triIndex = closestTri;
+		outhit->faceDir = faceDir;
 	}
 	/*
 		outhit->pos[0] =
@@ -633,55 +644,94 @@ __device__ void RaytraceTris(Texel* col
 		}
 		else {
 
-			setCol(col
-				, 255 * verts[tri].color[0]
-				, 255 * verts[tri].color[1]
-				, 255 * verts[tri].color[2]);
-			return;
+			vec3 hitPos = { 0 };
+			hitPos[0] = hitlist->pos[0];
+			hitPos[1] = hitlist->pos[1];
+			hitPos[2] = hitlist->pos[2];
+			vec3 diffCol = { 0 };
+			diffCol[0] = hitlist->col[0];
+			diffCol[1] = hitlist->col[1];
+			diffCol[2] = hitlist->col[2];
 
-			// START NORMAL-ORIENTED BIAS
-			vec3 nnhit = { 0 };
+			vec3 toLight = { 0 };
+			toLight[0] = verts[(numTris - 1) * 3].pos[0] - hitPos[0];
+			toLight[1] = verts[(numTris - 1) * 3].pos[1] - hitPos[1];
+			toLight[2] = verts[(numTris - 1) * 3].pos[2] - hitPos[2];
 
-			vec3 ab = { 0 };
-			ab[0] = verts[tri + 1].pos[0] - hitlist->pos[0]; //- verts[tri + 0].pos[0];
-			ab[1] = verts[tri + 1].pos[1] - hitlist->pos[1]; //- verts[tri + 0].pos[1];
-			ab[2] = verts[tri + 1].pos[2] - hitlist->pos[2]; //- verts[tri + 0].pos[2];
+			float distToLight = magnitude(toLight);
+			toLight[0] = toLight[0] / distToLight;
+			toLight[1] = toLight[1] / distToLight;
+			toLight[2] = toLight[2] / distToLight;
 
-			vec3 ac = { 0 };
-			ac[0] = verts[tri + 2].pos[0] - hitlist->pos[0]; // - verts[tri + 0].pos[0];
-			ac[1] = verts[tri + 2].pos[1] - hitlist->pos[1]; //- verts[tri + 0].pos[1];
-			ac[2] = verts[tri + 2].pos[2] - hitlist->pos[2]; //- verts[tri + 0].pos[2];
+			intersectTris(2, verts, hitlist, factor, numTris, persp
+				, hitPos[0]
+				, hitPos[1]
+				, hitPos[2]
+				, toLight[0], toLight[1], toLight[2]
+				, distToLight);
 
-			nnhit[0] = cross(0, ab, ac);
-			nnhit[1] = cross(1, ab, ac);
-			nnhit[2] = cross(2, ab, ac);
+			int shadowCaster = hitlist->triIndex;
 
-			float nnhitmag = magnitude(nnhit);
-			nnhit[0] = nnhit[0] / nnhitmag;
-			nnhit[1] = nnhit[1] / nnhitmag;
-			nnhit[2] = nnhit[2] / nnhitmag;
-
-			// END NORMAL-ORIENTED BIAS
-
-			vec3 ld = { 0 };
-			ld[0] = verts[3 * (numTris - 1)].pos[0] - hitlist->pos[0];
-			ld[1] = verts[3 * (numTris - 1)].pos[1] - hitlist->pos[1];
-			ld[2] = verts[3 * (numTris - 1)].pos[2] - hitlist->pos[2];
-
-			float ldmag = magnitude(ld);
-			vec3 nld = { 0 };
-			nld[0] = ld[0] / ldmag;
-			nld[1] = ld[1] / ldmag;
-			nld[2] = ld[2] / ldmag;
+			//TODO: optimise this?
+			//shadows can't be from self, light or nothing
+			if (shadowCaster != -1 && shadowCaster != tri && shadowCaster != (numTris - 1) * 3){
 			
-			float m = max(0.05f, dot(nld, nnhit));
+				setCol(col
+					, 255 * diffCol[0] * verts[3 * (numTris - 1)].color[0] * 0.05f
+					, 255 * diffCol[1] * verts[3 * (numTris - 1)].color[1] * 0.05f
+					, 255 * diffCol[2] * verts[3 * (numTris - 1)].color[2] * 0.05f);
 
-			setCol(col
-				, 255 * hitlist->col[0] * verts[3 * (numTris - 1)].color[0] * m
-				, 255 * hitlist->col[1] * verts[3 * (numTris - 1)].color[1] * m
-				, 255 * hitlist->col[2] * verts[3 * (numTris - 1)].color[2] * m);
+			}
+			else {
 
-			//TODO: shadows/specular lighting
+				// START NORMAL-ORIENTED BIAS
+				vec3 nnhit = { 0 };
+
+				vec3 ab = { 0 };
+				ab[0] = verts[tri + 1].pos[0] - hitPos[0]; //- verts[tri + 0].pos[0];
+				ab[1] = verts[tri + 1].pos[1] - hitPos[1]; //- verts[tri + 0].pos[1];
+				ab[2] = verts[tri + 1].pos[2] - hitPos[2]; //- verts[tri + 0].pos[2];
+
+				vec3 ac = { 0 };
+				ac[0] = verts[tri + 2].pos[0] - hitPos[0]; // - verts[tri + 0].pos[0];
+				ac[1] = verts[tri + 2].pos[1] - hitPos[1]; //- verts[tri + 0].pos[1];
+				ac[2] = verts[tri + 2].pos[2] - hitPos[2]; //- verts[tri + 0].pos[2];
+
+				nnhit[0] = cross(0, ab, ac);
+				nnhit[1] = cross(1, ab, ac);
+				nnhit[2] = cross(2, ab, ac);
+
+				//TODO: do not account for backface if culling
+				float nnhitmag = magnitude(nnhit);
+				nnhit[0] = nnhit[0] / nnhitmag;
+				nnhit[1] = nnhit[1] / nnhitmag;
+				nnhit[2] = nnhit[2] / nnhitmag;
+
+				vec3 nnnhit = { 0 };
+				nnnhit[0] = -1 * nnhit[0];
+				nnnhit[1] = -1 * nnhit[1];
+				nnnhit[2] = -1 * nnhit[2];
+
+				// END NORMAL-ORIENTED BIAS
+
+				vec3 ld = { 0 };
+				ld[0] = verts[3 * (numTris - 1)].pos[0] - hitPos[0];
+				ld[1] = verts[3 * (numTris - 1)].pos[1] - hitPos[1];
+				ld[2] = verts[3 * (numTris - 1)].pos[2] - hitPos[2];
+
+				float ldmag = magnitude(ld);
+				vec3 nld = { 0 };
+				nld[0] = ld[0] / ldmag;
+				nld[1] = ld[1] / ldmag;
+				nld[2] = ld[2] / ldmag;
+
+				float m = max(0.05f, max(dot(nld, nnhit), dot(nld, nnnhit)));
+
+				setCol(col
+					, 255 * diffCol[0] * verts[3 * (numTris - 1)].color[0] * m
+					, 255 * diffCol[1] * verts[3 * (numTris - 1)].color[1] * m
+					, 255 * diffCol[2] * verts[3 * (numTris - 1)].color[2] * m);
+			}
 
 		}
 	}
@@ -1006,7 +1056,7 @@ __device__ void Raytrace<MAX_RAY_DEPTH>(Texel* col
 
 	//set pixel to red to visualise max_depth rays
 	//setCol(col, 255, 0, 0);
-	setCol(col, col->r*factor, col->g*factor, col->b*factor);
+	setCol(col, col->col[0]*factor, col->col[1]*factor, col->col[2]*factor);
 
 	return;
 }
@@ -1095,7 +1145,7 @@ __global__ void get_raytraced_pixels(Texel* pixels, Vertex* verts, int numTris, 
 
 	if (x_int < WIDTH && y_int < HEIGHT) {
 
-		/*
+#if SHAPE_MODE == 1		
 		Raytrace<1>(
 			//image
 			&pixels[y_int * WIDTH + x_int]
@@ -1109,8 +1159,8 @@ __global__ void get_raytraced_pixels(Texel* pixels, Vertex* verts, int numTris, 
 			, cam_x + (WIDTH/-2.0f), cam_y + (HEIGHT/-2.0f), cam_z+1000,
 			-1
 			,1.0f, 1.0f, 1.0f);
-			*/
 
+#elif SHAPE_MODE == 0
 			//START PERSPECTIVE MATRIX
 	//TODO: calculate on host and copy to CUDA device once/when changed
 		mat4x4 persp = { 0 };
@@ -1160,6 +1210,7 @@ __global__ void get_raytraced_pixels(Texel* pixels, Vertex* verts, int numTris, 
 			, &hitlist[(raw_y * (WIDTH/(squareDim))) + (raw_x)]
 			//, &hitlist[(y_int * WIDTH) + (x_int)]
 			);
+#endif
 	}
 
 }
@@ -2580,8 +2631,8 @@ private:
 
 		vertData[12] = Vertex();
 
-		vertData[12].pos[0] = -200;
-		vertData[12].pos[1] = -2100;
+		vertData[12].pos[0] = -100;
+		vertData[12].pos[1] = -2050;
 		vertData[12].pos[2] = -100;
 		vertData[12].pos[3] = 1.0f;
 
@@ -2591,7 +2642,7 @@ private:
 
 		vertData[13] = Vertex();
 
-		vertData[13].pos[0] = 200;
+		vertData[13].pos[0] = 0;
 		vertData[13].pos[1] = -2100;
 		vertData[13].pos[2] = -100;
 		vertData[13].pos[3] = 1.0f;
@@ -2602,7 +2653,7 @@ private:
 
 		vertData[14] = Vertex();
 
-		vertData[14].pos[0] = 200;
+		vertData[14].pos[0] = 0;
 		vertData[14].pos[1] = -2000;
 		vertData[14].pos[2] = -100;
 		vertData[14].pos[3] = 1.0f;
@@ -3604,6 +3655,8 @@ private:
 
 		if (spheresChanged) {
 			spheresChanged = false;
+			//Hijack camchanged to update frame after sphere data changes
+			camChanged = DEFERRED_REFRESH_SQUARE_DIM * DEFERRED_REFRESH_SQUARE_DIM;
 			checkCudaErrors(
 				cudaMemcpyAsync(
 					cudaSpheres
