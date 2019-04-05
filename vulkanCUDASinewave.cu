@@ -554,17 +554,17 @@ __device__ void intersectTris(int depth, Vertex* verts, IntersectionResult* outh
 		outhit->pos[1] = orig_y + (minT * ray_y);
 		outhit->pos[2] = orig_z + (minT * ray_z);
 
-		outhit->col[0] =
+		outhit->col[0] = 
 			(verts[closestTri + 0].color[0] * (1.0 - minV - minU)) +
 			(verts[closestTri + 1].color[0] * minV) +
 			(verts[closestTri + 2].color[0] * minU);
 
-		outhit->col[1] =
+		outhit->col[1] = 
 			(verts[closestTri + 0].color[1] * (1.0 - minV - minU)) +
 			(verts[closestTri + 1].color[1] * minV) +
 			(verts[closestTri + 2].color[1] * minU);
 
-		outhit->col[2] =
+		outhit->col[2] = 
 			(verts[closestTri + 0].color[2] * (1.0 - minV - minU)) +
 			(verts[closestTri + 1].color[2] * minV) +
 			(verts[closestTri + 2].color[2] * minU);
@@ -620,6 +620,7 @@ __device__ void RaytraceTris(Texel* col
 	intersectTris(1, verts, hitlist, factor, numTris, persp, orig_x, orig_y, orig_z, ray_x, ray_y, ray_z, -1.0f);
 
 	int tri = hitlist->triIndex;
+	bool inside = (hitlist->faceDir == -1);
 
 	if (tri < 0) {
 		blendCol(col, factor, 150, 160, 200);
@@ -651,6 +652,54 @@ __device__ void RaytraceTris(Texel* col
 			toLight[1] = toLight[1] / distToLight;
 			toLight[2] = toLight[2] / distToLight;
 
+
+			
+
+			//TODO: Pre-computed normals do not work here - do they represent normal in the wrong space?
+
+			vec3 nnhit = { 0 };
+			nnhit[0] = hitlist->normal[0];
+			nnhit[1] = hitlist->normal[1];
+			nnhit[2] = hitlist->normal[2];
+
+			 //normal from OBJ file is already normalised
+			float hitNormalMagnitude = magnitude(nnhit);
+			nnhit[0] = nnhit[0]/ hitNormalMagnitude;
+			nnhit[1] = nnhit[1]/ hitNormalMagnitude;
+			nnhit[2] = nnhit[2]/ hitNormalMagnitude;
+			
+			/*
+			// START NORMAL-ORIENTED BIAS
+			vec3 nnhit = { 0 };
+
+			vec3 ab = { 0 };
+			ab[0] = verts[tri + 1].pos[0] - hitPos[0]; //- verts[tri + 0].pos[0];
+			ab[1] = verts[tri + 1].pos[1] - hitPos[1]; //- verts[tri + 0].pos[1];
+			ab[2] = verts[tri + 1].pos[2] - hitPos[2]; //- verts[tri + 0].pos[2];
+
+			vec3 ac = { 0 };
+			ac[0] = verts[tri + 2].pos[0] - hitPos[0]; // - verts[tri + 0].pos[0];
+			ac[1] = verts[tri + 2].pos[1] - hitPos[1]; //- verts[tri + 0].pos[1];
+			ac[2] = verts[tri + 2].pos[2] - hitPos[2]; //- verts[tri + 0].pos[2];
+
+			nnhit[0] = cross(0, ab, ac);
+			nnhit[1] = cross(1, ab, ac);
+			nnhit[2] = cross(2, ab, ac);
+
+			//TODO: do not account for backface if culling
+			float nnhitmag = magnitude(nnhit);
+			nnhit[0] = nnhit[0] / nnhitmag;
+			nnhit[1] = nnhit[1] / nnhitmag;
+			nnhit[2] = nnhit[2] / nnhitmag;
+
+			//END CALCULATE NORMAL
+			*/
+			
+			vec3 nnnhit = { 0 };
+			nnnhit[0] = -1 * nnhit[0];
+			nnnhit[1] = -1 * nnhit[1];
+			nnnhit[2] = -1 * nnhit[2];
+
 			intersectTris(2, verts, hitlist, factor, numTris, persp
 				, hitPos[0] + hitlist->normal[0] * 1e-2
 				, hitPos[1] + hitlist->normal[1] * 1e-2
@@ -659,63 +708,99 @@ __device__ void RaytraceTris(Texel* col
 				, distToLight);
 
 			int shadowCaster = hitlist->triIndex;
+			
+			vec3 reflCol = { 0 };
+			vec3 refrCol = { 0 };
+			float fresneleffect = -1.0f;
+
+			vec3 raydir = { 0 };
+			raydir[0] = ray_x;
+			raydir[1] = ray_y;
+			raydir[2] = ray_z;
+			float raydirmag = magnitude(raydir);
+			raydir[0] = ray_x / raydirmag;
+			raydir[1] = ray_y / raydirmag;
+			raydir[2] = ray_z / raydirmag;
+
+			vec3 nraydir = { 0 };
+			nraydir[0] = -ray_x/ raydirmag;
+			nraydir[1] = -ray_y/ raydirmag;
+			nraydir[2] = -ray_z/ raydirmag;
+
+			float facingratio = dot(nnhit, nraydir);
+			fresneleffect = ((1 - facingratio) * (1 - facingratio)*(0.9f)) + 0.1f;
+
+			//if (TRI IS REFRACTIVE) {
+
+				float ior = 1.01f;
+				float eta = (inside) ? ior : 1.0f / ior;
+
+				float cosi = abs(dot(nnhit, raydir));
+				float k = 1 - (eta * eta * (1 - cosi * cosi));
+
+				vec3 refrdir = { 0 };
+
+				refrdir[0] = (eta * raydir[0]) + ((eta * (cosi - k)) * ((inside) ? nnnhit[0] : nnhit[0]));
+				refrdir[1] = (eta * raydir[1]) + ((eta * (cosi - k)) * ((inside) ? nnnhit[1] : nnhit[1]));
+				refrdir[2] = (eta * raydir[2]) + ((eta * (cosi - k)) * ((inside) ? nnnhit[2] : nnhit[2]));
+
+				//normalise (and invert y)
+				float refrMag = magnitude(refrdir);
+				refrdir[0] = refrdir[0] / refrMag;
+				refrdir[1] = refrdir[1] / refrMag;
+				refrdir[2] = refrdir[2] / refrMag;
+
+				intersectTris(2, verts, hitlist, factor, numTris, persp
+					, hitPos[0] + hitlist->normal[0] * 1e-2
+					, hitPos[1] + hitlist->normal[1] * 1e-2
+					, hitPos[2] + hitlist->normal[2] * 1e-2
+					, refrdir[0], refrdir[1], refrdir[2]
+					, -1.0f);
+
+				refrCol[0] = hitlist->col[0];
+				refrCol[1] = hitlist->col[1];
+				refrCol[2] = hitlist->col[2];
+			//}
+
+			//if (TRI IS REFLECTIVE) {
+
+				float rayhitdot = dot(raydir, ((inside) ? nnnhit: nnhit));
+
+				vec3 refldir = { 0 };
+				refldir[0] = raydir[0] - (((inside) ? nnnhit[0] : nnhit[0]) * 2 * rayhitdot);
+				refldir[1] = raydir[1] - (((inside) ? nnnhit[1] : nnhit[1]) * 2 * rayhitdot);
+				refldir[2] = raydir[2] - (((inside) ? nnnhit[2] : nnhit[2]) * 2 * rayhitdot);
+
+				intersectTris(2, verts, hitlist, factor, numTris, persp
+					, hitPos[0] + hitlist->normal[0] * 1e-2
+					, hitPos[1] + hitlist->normal[1] * 1e-2
+					, hitPos[2] + hitlist->normal[2] * 1e-2
+					, refldir[0], refldir[1], refldir[2]
+					, -1.0f);
+
+				reflCol[0] = hitlist->col[0];
+				reflCol[1] = hitlist->col[1];
+				reflCol[2] = hitlist->col[2];
+
+				fresneleffect = (fresneleffect < 0.0f) ? fresneleffect : 0.5f;
+			//}
+
+
+			//TODO: Shadow being cast from light or is it broken refraction!?
+
 
 			//TODO: optimise this?
 			//shadows can't be from self, light or nothing
 			if (shadowCaster != -1 && shadowCaster != tri && shadowCaster != (numTris - 1) * 3){
 			
+				//hue-swap shadow colours
 				setCol(col
-					, 255 * diffCol[0] * verts[3 * (numTris - 1)].color[0] * 0.05f
+					, 255 * diffCol[0] * verts[3 * (numTris - 1)].color[2] * 0.05f
 					, 255 * diffCol[1] * verts[3 * (numTris - 1)].color[1] * 0.05f
-					, 255 * diffCol[2] * verts[3 * (numTris - 1)].color[2] * 0.05f);
+					, 255 * diffCol[2] * verts[3 * (numTris - 1)].color[0] * 0.05f);
 
 			}
 			else {
-
-				// START NORMAL-ORIENTED BIAS
-				vec3 nnhit = { 0 };
-
-				vec3 ab = { 0 };
-				ab[0] = verts[tri + 1].pos[0] - hitPos[0]; //- verts[tri + 0].pos[0];
-				ab[1] = verts[tri + 1].pos[1] - hitPos[1]; //- verts[tri + 0].pos[1];
-				ab[2] = verts[tri + 1].pos[2] - hitPos[2]; //- verts[tri + 0].pos[2];
-
-				vec3 ac = { 0 };
-				ac[0] = verts[tri + 2].pos[0] - hitPos[0]; // - verts[tri + 0].pos[0];
-				ac[1] = verts[tri + 2].pos[1] - hitPos[1]; //- verts[tri + 0].pos[1];
-				ac[2] = verts[tri + 2].pos[2] - hitPos[2]; //- verts[tri + 0].pos[2];
-
-				nnhit[0] = cross(0, ab, ac);
-				nnhit[1] = cross(1, ab, ac);
-				nnhit[2] = cross(2, ab, ac);
-
-				//TODO: do not account for backface if culling
-				float nnhitmag = magnitude(nnhit);
-				nnhit[0] = nnhit[0] / nnhitmag;
-				nnhit[1] = nnhit[1] / nnhitmag;
-				nnhit[2] = nnhit[2] / nnhitmag;
-				
-
-				/*
-
-				Pre-computed normals do not work here - wrong space?
-
-				vec3 nnhit = { 0 };
-				nnhit[0] = hitlist->normal[0];
-				nnhit[1] = hitlist->normal[1];
-				nnhit[2] = hitlist->normal[2];
-				 //normal from OBJ file is already normalised
-				float hitNormalMagnitude = magnitude(nnhit);
-				nnhit[0] = nnhit[0]/ hitNormalMagnitude;
-				nnhit[1] = nnhit[1]/ hitNormalMagnitude;
-				nnhit[2] = nnhit[2]/ hitNormalMagnitude;
-				*/
-
-				vec3 nnnhit = { 0 };
-				nnnhit[0] = -1 * nnhit[0];
-				nnnhit[1] = -1 * nnhit[1];
-				nnnhit[2] = -1 * nnhit[2];
-				// END NORMAL-ORIENTED BIAS
 
 				vec3 ld = { 0 };
 				ld[0] = verts[3 * (numTris - 1)].pos[0] - hitPos[0];
@@ -734,6 +819,13 @@ __device__ void RaytraceTris(Texel* col
 					, 255 * diffCol[0] * verts[3 * (numTris - 1)].color[0] * m
 					, 255 * diffCol[1] * verts[3 * (numTris - 1)].color[1] * m
 					, 255 * diffCol[2] * verts[3 * (numTris - 1)].color[2] * m);
+
+				blendCol(col, 0.5f
+					, 255 * ((1.0f - (fresneleffect)) * reflCol[0] + (fresneleffect) * refrCol[0])
+					, 255 * ((1.0f - (fresneleffect)) * reflCol[1] + (fresneleffect) * refrCol[1])
+					, 255 * ((1.0f - (fresneleffect)) * reflCol[2] + (fresneleffect) * refrCol[2]) 
+				);
+
 			}
 
 		}
@@ -1242,8 +1334,8 @@ IntersectionResult* hitListData;
 bool spheresChanged;
 bool vertsChanged;
 float cam_x = 0.0f;
-float cam_y = 0.0f;
-float cam_z = 0.0f;
+float cam_y = -1000.0f;
+float cam_z = -500.0f;
 int camChanged = 0;
 
 float speed = 0.02f;

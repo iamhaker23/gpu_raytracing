@@ -43,14 +43,13 @@ int OBJLoader::loadRawVertexList(const char * fileName, Vertex** vertData, float
 			v1.normal[1] = m_vNormals[normAIdx].pos[1];
 			v1.normal[2] = m_vNormals[normAIdx].pos[2];
 		}
-		v1.color[0] = 1.0f;
-		v1.color[1] = 0.0f;
-		v1.color[2] = 0.0f;
 		
 		if (uvAIdx < m_vTexCoords.size()) {
-			v1.uv[0] = abs(m_vTexCoords[uvAIdx].pos[0]);
-			v1.uv[1] = abs(m_vTexCoords[uvAIdx].pos[1]);
-			v1.uv[2] = abs(m_vTexCoords[uvAIdx].pos[2]);
+			v1.color[0] = abs(m_vTexCoords[uvAIdx].pos[0]);
+			v1.color[1] = abs(m_vTexCoords[uvAIdx].pos[1]);
+			v1.color[2] = 0.5f;
+			v1.uv[0] = (m_vTexCoords[uvAIdx].pos[0]);
+			v1.uv[1] = (m_vTexCoords[uvAIdx].pos[1]);
 		}
 
 		Vertex v2 = Vertex();
@@ -68,9 +67,11 @@ int OBJLoader::loadRawVertexList(const char * fileName, Vertex** vertData, float
 		v2.color[2] = 0.0f;
 
 		if (uvBIdx < m_vTexCoords.size()) {
-			v2.uv[0] = abs(m_vTexCoords[uvBIdx].pos[0]);
-			v2.uv[1] = abs(m_vTexCoords[uvBIdx].pos[1]);
-			v2.uv[2] = abs(m_vTexCoords[uvBIdx].pos[2]);
+			v2.color[0] = abs(m_vTexCoords[uvBIdx].pos[0]);
+			v2.color[1] = abs(m_vTexCoords[uvBIdx].pos[1]);
+			v2.color[2] = 0.5f;
+			v2.uv[0] = (m_vTexCoords[uvBIdx].pos[0]);
+			v2.uv[1] = (m_vTexCoords[uvBIdx].pos[1]);
 		}
 
 		Vertex v3 = Vertex();
@@ -88,9 +89,11 @@ int OBJLoader::loadRawVertexList(const char * fileName, Vertex** vertData, float
 		v3.color[2] = 1.0f;
 
 		if (uvCIdx < m_vTexCoords.size()) {
-			v3.uv[0] = abs(m_vTexCoords[uvCIdx].pos[0]);
-			v3.uv[1] = abs(m_vTexCoords[uvCIdx].pos[1]);
-			v3.uv[2] = abs(m_vTexCoords[uvCIdx].pos[2]);
+			v3.color[0] = abs(m_vTexCoords[uvCIdx].pos[0]);
+			v3.color[1] = abs(m_vTexCoords[uvCIdx].pos[1]);
+			v3.color[2] = 0.5f;
+			v3.uv[0] = (m_vTexCoords[uvCIdx].pos[0]);
+			v3.uv[1] = (m_vTexCoords[uvCIdx].pos[1]);
 		}
 
 		m_distinctVerts.push_back(v1);
