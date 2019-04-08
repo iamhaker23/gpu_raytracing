@@ -640,33 +640,33 @@ __device__ void intersectBVH(BVH* bvh
 		t1s[1] = ((bvh[i].max[1] - (orig_y)) * (raydir[1]));
 		t1s[2] = ((bvh[i].max[2] - (orig_z)) * (raydir[2]));
 
+		/*
 		vec3 tsmaller = { 0 };
 		vec3 tbigger = { 0 };
-		if (magnitude(t0s) > magnitude(t1s)) {
-			tsmaller[0] = t1s[0];
-			tsmaller[1] = t1s[1];
-			tsmaller[2] = t1s[2];
-			tbigger[0] = t0s[0];
-			tbigger[1] = t0s[1];
-			tbigger[2] = t0s[2];
-		}
-		else {
-			tsmaller[0] = t0s[0];
-			tsmaller[1] = t0s[1];
-			tsmaller[2] = t0s[2];
-			tbigger[0] = t1s[0];
-			tbigger[1] = t1s[1];
-			tbigger[2] = t1s[2];
-		}
+
+		tsmaller[0] = min(t0s[0], t1s[0]);
+		tbigger[0] = max(t0s[0], t1s[0]);
+
+		tsmaller[1] = min(t0s[1], t1s[1]);
+		tbigger[1] = max(t0s[1], t1s[1]);
+
+		tsmaller[2] = min(t0s[2], t1s[2]);
+		tbigger[2] = max(t0s[2], t1s[2]);
 
 		float tmin = max(tsmaller[0], max(tsmaller[1], tsmaller[2]));
 		float tmax = min(tbigger[0], min(tbigger[1], tbigger[2]));
-		
+		*/
+
+		float tmin = max(min(t0s[0], t1s[0]), max(min(t0s[1], t1s[1]), min(t0s[2], t1s[2])));
+		float tmax = min(max(t0s[0], t1s[0]), min(max(t0s[1], t1s[1]), max(t0s[2], t1s[2])));
+
 		if (tmin < tmax) {
 
-			outhit->col[0] = 1;
-			outhit->col[1] = 1;
-			outhit->col[2] = 0;
+			//debug the BVH
+			//outhit->col[0] = 1;
+			//outhit->col[1] = 1;
+			//outhit->col[2] = 0;
+
 			//check triangles for any hit BVH
 			//Can't ignore further BVH boxes in case of a BVH hit but Tri miss
 			intersectTris(
