@@ -9,7 +9,7 @@ std::vector<ObjMat> OBJLoader::theMats = std::vector<ObjMat>();
 std::vector<Vertex> OBJLoader::m_distinctVerts = std::vector<Vertex>();
 std::vector<BVH_BAKE> OBJLoader::m_BVH = std::vector<BVH_BAKE>();
 
-int OBJLoader::loadRawVertexList(const char * fileName, Vertex** vertData, float scale) {
+int OBJLoader::loadRawVertexList(const char * fileName, Vertex** vertData) {
 
 	m_distinctVerts.clear();
 
@@ -35,9 +35,9 @@ int OBJLoader::loadRawVertexList(const char * fileName, Vertex** vertData, float
 		//TODO: use vertex indexing to minimise duplication in vertData
 		//Get distinct vertex points
 		Vertex v1 = Vertex();
-		v1.pos[0] = m_vVertices[vertAIdx].pos[0] * scale;
-		v1.pos[1] = m_vVertices[vertAIdx].pos[1] * scale;
-		v1.pos[2] = m_vVertices[vertAIdx].pos[2] * scale;
+		v1.pos[0] = m_vVertices[vertAIdx].pos[0] * VERT_IMPORT_SCALE;
+		v1.pos[1] = m_vVertices[vertAIdx].pos[1] * VERT_IMPORT_SCALE;
+		v1.pos[2] = m_vVertices[vertAIdx].pos[2] * VERT_IMPORT_SCALE;
 
 		if (normAIdx < m_vNormals.size()) {
 			v1.normal[0] = m_vNormals[normAIdx].pos[0];
@@ -46,19 +46,22 @@ int OBJLoader::loadRawVertexList(const char * fileName, Vertex** vertData, float
 		}
 		
 		if (uvAIdx < m_vTexCoords.size()) {
-			v1.color[0] = abs(m_vTexCoords[uvAIdx].pos[0]);
-			v1.color[1] = abs(m_vTexCoords[uvAIdx].pos[1]);
+			v1.color[0] = (m_vTexCoords[uvAIdx].pos[0]);
+			v1.color[1] = (m_vTexCoords[uvAIdx].pos[1]);
 			//v1.color[0] = 0.8f;
 			//v1.color[1] = 0.8f;
 			v1.color[2] = 0.8f;
+			//vec3_norm(v1.color, v1.color);
+
+
 			v1.uv[0] = (m_vTexCoords[uvAIdx].pos[0]);
 			v1.uv[1] = (m_vTexCoords[uvAIdx].pos[1]);
 		}
 
 		Vertex v2 = Vertex();
-		v2.pos[0] = m_vVertices[vertBIdx].pos[0] * scale;
-		v2.pos[1] = m_vVertices[vertBIdx].pos[1] * scale;
-		v2.pos[2] = m_vVertices[vertBIdx].pos[2] * scale;
+		v2.pos[0] = m_vVertices[vertBIdx].pos[0] * VERT_IMPORT_SCALE;
+		v2.pos[1] = m_vVertices[vertBIdx].pos[1] * VERT_IMPORT_SCALE;
+		v2.pos[2] = m_vVertices[vertBIdx].pos[2] * VERT_IMPORT_SCALE;
 
 		if (normBIdx < m_vNormals.size()) {
 			v2.normal[0] = m_vNormals[normBIdx].pos[0];
@@ -70,19 +73,22 @@ int OBJLoader::loadRawVertexList(const char * fileName, Vertex** vertData, float
 		v2.color[2] = 0.0f;
 
 		if (uvBIdx < m_vTexCoords.size()) {
-			v2.color[0] = abs(m_vTexCoords[uvBIdx].pos[0]);
-			v2.color[1] = abs(m_vTexCoords[uvBIdx].pos[1]);
+			v2.color[0] = (m_vTexCoords[uvBIdx].pos[0]);
+			v2.color[1] = (m_vTexCoords[uvBIdx].pos[1]);
 			//v2.color[0] = 0.8f;
 			//v2.color[1] = 0.8f;
 			v2.color[2] = 0.8f;
+			//vec3_norm(v2.color, v2.color);
+
+
 			v2.uv[0] = (m_vTexCoords[uvBIdx].pos[0]);
 			v2.uv[1] = (m_vTexCoords[uvBIdx].pos[1]);
 		}
 
 		Vertex v3 = Vertex();
-		v3.pos[0] = m_vVertices[vertCIdx].pos[0] * scale;
-		v3.pos[1] = m_vVertices[vertCIdx].pos[1] * scale;
-		v3.pos[2] = m_vVertices[vertCIdx].pos[2] * scale;
+		v3.pos[0] = m_vVertices[vertCIdx].pos[0] * VERT_IMPORT_SCALE;
+		v3.pos[1] = m_vVertices[vertCIdx].pos[1] * VERT_IMPORT_SCALE;
+		v3.pos[2] = m_vVertices[vertCIdx].pos[2] * VERT_IMPORT_SCALE;
 
 		if (normCIdx < m_vNormals.size()) {
 			v3.normal[0] = m_vNormals[normCIdx].pos[0];
@@ -94,11 +100,14 @@ int OBJLoader::loadRawVertexList(const char * fileName, Vertex** vertData, float
 		v3.color[2] = 1.0f;
 
 		if (uvCIdx < m_vTexCoords.size()) {
-			v3.color[0] = abs(m_vTexCoords[uvCIdx].pos[0]);
-			v3.color[1] = abs(m_vTexCoords[uvCIdx].pos[1]);
+			v3.color[0] = (m_vTexCoords[uvCIdx].pos[0]);
+			v3.color[1] = (m_vTexCoords[uvCIdx].pos[1]);
 			//v3.color[0] = 0.8f;
 			//v3.color[1] = 0.8f;
 			v3.color[2] = 0.8f;
+			//vec3_norm(v3.color, v3.color);
+
+
 			v3.uv[0] = (m_vTexCoords[uvCIdx].pos[0]);
 			v3.uv[1] = (m_vTexCoords[uvCIdx].pos[1]);
 		}
@@ -110,7 +119,7 @@ int OBJLoader::loadRawVertexList(const char * fileName, Vertex** vertData, float
 	}
 
 	int size = m_distinctVerts.size();
-	std::cout << "Loading " << size << " vertices (scale=" << scale << "x) from " << fileName << std::endl;
+	std::cout << "Loading " << size << " vertices (scale=" << VERT_IMPORT_SCALE << "x) from " << fileName << std::endl;
 
 	//return size
 	return size;

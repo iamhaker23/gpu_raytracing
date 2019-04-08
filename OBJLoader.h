@@ -77,7 +77,7 @@ class OBJLoader {
 
 public:
 	
-	static int loadRawVertexList(const char * fileName, Vertex** vertData, float scale);
+	static int loadRawVertexList(const char * fileName, Vertex** vertData);
 	static void loadVertices(Vertex* vertData, int numVerts);
 	static int countBVHNeeded(Vertex* vertData, int numVerts, BVH** bvhData);
 	static void createBVH(BVH* bvhData, int numBVH, Vertex* vertData, int numVerts);

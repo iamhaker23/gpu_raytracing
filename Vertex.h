@@ -2,8 +2,9 @@
 #include "linmath.h"
 
 #define BVH_CHUNK_SIZE 40
-#define BVH_BOX_SIZE 2000.0f
-#define BVH_EXPAND_LIMIT 1000.0f
+#define BVH_BOX_SIZE 100.0f
+#define BVH_EXPAND_LIMIT 100.0f
+#define VERT_IMPORT_SCALE 1000.0f
 
 struct BVH {
 	vec3 min = { 0 };
