@@ -78,6 +78,9 @@ public:
 	
 	static int loadRawVertexList(const char * fileName, Vertex** vertData, float scale);
 	static void loadVertices(Vertex* vertData, int numVerts);
+	static int countBVHNeeded(Vertex* vertData, int numVerts, BVH** bvhData);
+	static void createBVH(BVH* bvhData, int numBVH, Vertex* vertData, int numVerts);
+
 private:
 
 	static void readTriangleFaceVertTexNorm(char *line, int matId);
@@ -86,6 +89,8 @@ private:
 	static bool myMTLLoader(const char *mainName, const char *filename);
 	static int lookupMaterial(char *matName);
 	static void splitFrontString(char * inputString, char * frontString, char * restString, int size);
+
+	static std::vector<BVH_BAKE> m_BVH;
 
 	static std::vector<Vertex> m_distinctVerts;
 	static std::vector<vector3d> m_vVertices;

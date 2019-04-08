@@ -1,6 +1,38 @@
 #pragma once
 #include "linmath.h"
 
+#define BVH_CHUNK_SIZE 40
+#define BVH_BOX_SIZE 1000.0f
+
+struct BVH {
+	vec3 min = { 0 };
+	vec3 max = { 0 };
+	int numTris;
+	int triIdx[BVH_CHUNK_SIZE] = { 0 };
+
+	BVH() {
+		for (int i = 0; i < BVH_CHUNK_SIZE; i++) {
+			triIdx[i] = -1;
+		}
+	}
+
+};
+
+struct BVH_BAKE {
+	vec3 min = { 0 };
+	vec3 max = { 0 };
+	std::vector<int> triIdx;
+
+	bool hasVerts() {
+		return triIdx.size() > 0;
+	}
+
+	BVH_BAKE() {
+		triIdx = std::vector<int>();
+	}
+
+};
+
 struct Vertex {
 	vec4 pos;
 	vec3 color;

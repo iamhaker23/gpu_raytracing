@@ -7,6 +7,7 @@ std::vector<vector3d> OBJLoader::m_vTexCoords = std::vector<vector3d>();
 std::vector<SObjFace> OBJLoader::m_vFaces = std::vector<SObjFace>();
 std::vector<ObjMat> OBJLoader::theMats = std::vector<ObjMat>();
 std::vector<Vertex> OBJLoader::m_distinctVerts = std::vector<Vertex>();
+std::vector<BVH_BAKE> OBJLoader::m_BVH = std::vector<BVH_BAKE>();
 
 int OBJLoader::loadRawVertexList(const char * fileName, Vertex** vertData, float scale) {
 
@@ -47,7 +48,9 @@ int OBJLoader::loadRawVertexList(const char * fileName, Vertex** vertData, float
 		if (uvAIdx < m_vTexCoords.size()) {
 			v1.color[0] = abs(m_vTexCoords[uvAIdx].pos[0]);
 			v1.color[1] = abs(m_vTexCoords[uvAIdx].pos[1]);
-			v1.color[2] = 0.5f;
+			//v1.color[0] = 0.8f;
+			//v1.color[1] = 0.8f;
+			v1.color[2] = 0.8f;
 			v1.uv[0] = (m_vTexCoords[uvAIdx].pos[0]);
 			v1.uv[1] = (m_vTexCoords[uvAIdx].pos[1]);
 		}
@@ -69,7 +72,9 @@ int OBJLoader::loadRawVertexList(const char * fileName, Vertex** vertData, float
 		if (uvBIdx < m_vTexCoords.size()) {
 			v2.color[0] = abs(m_vTexCoords[uvBIdx].pos[0]);
 			v2.color[1] = abs(m_vTexCoords[uvBIdx].pos[1]);
-			v2.color[2] = 0.5f;
+			//v2.color[0] = 0.8f;
+			//v2.color[1] = 0.8f;
+			v2.color[2] = 0.8f;
 			v2.uv[0] = (m_vTexCoords[uvBIdx].pos[0]);
 			v2.uv[1] = (m_vTexCoords[uvBIdx].pos[1]);
 		}
@@ -91,7 +96,9 @@ int OBJLoader::loadRawVertexList(const char * fileName, Vertex** vertData, float
 		if (uvCIdx < m_vTexCoords.size()) {
 			v3.color[0] = abs(m_vTexCoords[uvCIdx].pos[0]);
 			v3.color[1] = abs(m_vTexCoords[uvCIdx].pos[1]);
-			v3.color[2] = 0.5f;
+			//v3.color[0] = 0.8f;
+			//v3.color[1] = 0.8f;
+			v3.color[2] = 0.8f;
 			v3.uv[0] = (m_vTexCoords[uvCIdx].pos[0]);
 			v3.uv[1] = (m_vTexCoords[uvCIdx].pos[1]);
 		}
@@ -117,6 +124,237 @@ void OBJLoader::loadVertices(Vertex* vertData, int numVerts) {
 	for (int v = 0; v < numVerts; v++) {
 		vertData[v] = m_distinctVerts[v];
 	}
+}
+
+
+int OBJLoader::countBVHNeeded(Vertex* vertData, int numVerts, BVH** bvhData) {
+	//getmin,max bounds
+	int maxVert[3] = { -1, -1, -1 };
+	int minVert[3] = { -1, -1, -1 };
+
+	for (int i = 0; i < numVerts; i++) {
+
+		if (maxVert[0] == -1 || vertData[i].pos[0] > vertData[maxVert[0]].pos[0]) {
+			maxVert[0] = i;
+		}
+		if (maxVert[1] == -1 || vertData[i].pos[1] > vertData[maxVert[1]].pos[1]) {
+			maxVert[1] = i;
+		}
+		if (maxVert[2] == -1 || vertData[i].pos[2] > vertData[maxVert[2]].pos[2]) {
+			maxVert[2] = i;
+		}
+
+		if (minVert[0] == -1 || vertData[i].pos[0] < vertData[minVert[0]].pos[0]) {
+			minVert[0] = i;
+		}
+		if (minVert[1] == -1 || vertData[i].pos[1] < vertData[minVert[1]].pos[1]) {
+			minVert[1] = i;
+		}
+		if (minVert[2] == -1 || vertData[i].pos[2] < vertData[minVert[2]].pos[2]) {
+			minVert[2] = i;
+		}
+
+
+	}
+
+	//divide each dimension by boxsize
+
+	vec3 bvhSpan = { 0 };
+	bvhSpan[0] = vertData[maxVert[0]].pos[0] - vertData[minVert[0]].pos[0];
+	bvhSpan[1] = vertData[maxVert[1]].pos[1] - vertData[minVert[1]].pos[1];
+	bvhSpan[2] = vertData[maxVert[2]].pos[2] - vertData[minVert[2]].pos[2];
+
+	//pad BVH-space
+	vec3 padding = { 0 };
+	padding[0] = bvhSpan[0];
+	padding[1] = bvhSpan[1];
+	padding[2] = bvhSpan[2];
+
+	int maxNumBVH[3] = { 1, 1, 1 };
+
+	while (padding[0] >= BVH_BOX_SIZE) {
+		padding[0] -= BVH_BOX_SIZE;
+		maxNumBVH[0]++;
+	}
+
+	while (padding[1] >= BVH_BOX_SIZE) {
+		padding[1] -= BVH_BOX_SIZE;
+		maxNumBVH[1]++;
+	}
+
+	while (padding[2] >= BVH_BOX_SIZE) {
+		padding[2] -= BVH_BOX_SIZE;
+		maxNumBVH[2]++;
+	}
+
+	//init BVH vert lists
+	int totalMaxNumBVH = maxNumBVH[0] * maxNumBVH[1] * maxNumBVH[2];
+
+	std::cout << "Populating " << maxNumBVH[0] << "*" << maxNumBVH[1] << "*" << maxNumBVH[2] << "=" << totalMaxNumBVH << " BVH" << std::endl;
+
+	vec3 bvhpaddedmin = { 0 };
+	bvhpaddedmin[0] = vertData[minVert[0]].pos[0] - (padding[0] / 2.0f);
+	bvhpaddedmin[1] = vertData[minVert[1]].pos[1] - (padding[1] / 2.0f);
+	bvhpaddedmin[2] = vertData[minVert[2]].pos[2] - (padding[2] / 2.0f);
+
+	std::cout << "BVH starting at (" << bvhpaddedmin[0] << "," << bvhpaddedmin[1] << "," << bvhpaddedmin[2] << ")" << std::endl;
+
+	int currBVH = 0;
+	for (int x = 0; x <= maxNumBVH[0]; x++) {
+		for (int y = 0; y <= maxNumBVH[1]; y++) {
+			for (int z = 0; z <= maxNumBVH[2]; z++) {
+
+				m_BVH.push_back(BVH_BAKE());
+
+				m_BVH[currBVH].min[0] = bvhpaddedmin[0] + (x*BVH_BOX_SIZE);
+				m_BVH[currBVH].min[1] = bvhpaddedmin[1] + (y*BVH_BOX_SIZE);
+				m_BVH[currBVH].min[2] = bvhpaddedmin[2] + (z*BVH_BOX_SIZE);
+
+				m_BVH[currBVH].max[0] = bvhpaddedmin[0] + ((x + 1) * BVH_BOX_SIZE);
+				m_BVH[currBVH].max[1] = bvhpaddedmin[1] + ((y + 1) * BVH_BOX_SIZE);
+				m_BVH[currBVH].max[2] = bvhpaddedmin[2] + ((z + 1) * BVH_BOX_SIZE);
+
+				//std::cout << "BVHMIN->(" << m_BVH[currBVH].min[0] << "," << m_BVH[currBVH].min[1] << "," << m_BVH[currBVH].min[2] << ")" << std::endl;
+				//std::cout << "BVHMAX->(" << m_BVH[currBVH].max[0] << "," << m_BVH[currBVH].max[1] << "," << m_BVH[currBVH].max[2] << ")" << std::endl;
+
+				currBVH++;
+			}
+		}
+	}
+
+	int currentRedirect = -1;
+	int chunks = 0;
+
+	int addedTris = 0;
+
+	std::cout << "Verts to BVH:" << numVerts << std::endl;
+
+	//fill bvh vert lists
+	for (int i = 0; i < m_BVH.size(); i++) {
+
+		for (int tri = 0; tri < numVerts; tri += 3) {
+
+			//std::cout << "TESTING " << tri << "-> " << m_BVH[i].min[0] << " < " << vertData[tri + 0].pos[0] << " < " << m_BVH[i].max[0] << std::endl;
+
+			bool containsTri = (
+						(
+						//x1
+						vertData[tri + 0].pos[0] >= m_BVH[i].min[0] 
+						&& vertData[tri + 0].pos[0] <= m_BVH[i].max[0] 
+						//y1
+						&& vertData[tri + 0].pos[1] >= m_BVH[i].min[1] 
+						&& vertData[tri + 0].pos[1] <= m_BVH[i].max[1] 
+						//z1
+						&& vertData[tri + 0].pos[2] >= m_BVH[i].min[2] 
+						&& vertData[tri + 0].pos[2] <= m_BVH[i].max[2] 
+						)
+					|| (
+						//x1
+						vertData[tri + 1].pos[0] >= m_BVH[i].min[0]
+						&& vertData[tri + 1].pos[0] <= m_BVH[i].max[0]
+						//y1
+						&& vertData[tri + 1].pos[1] >= m_BVH[i].min[1]
+						&& vertData[tri + 1].pos[1] <= m_BVH[i].max[1]
+						//z1
+						&& vertData[tri + 1].pos[2] >= m_BVH[i].min[2] 
+						&& vertData[tri + 1].pos[2] <= m_BVH[i].max[2] 
+						)
+					|| (
+						//x1
+						vertData[tri + 2].pos[0] >= m_BVH[i].min[0]
+						&& vertData[tri + 2].pos[0] <= m_BVH[i].max[0]
+						//y1
+						&& vertData[tri + 2].pos[1] >= m_BVH[i].min[1] 
+						&& vertData[tri + 2].pos[1] <= m_BVH[i].max[1] 
+						//z1
+						&& vertData[tri + 2].pos[2] >= m_BVH[i].min[2] 
+						&& vertData[tri + 2].pos[2] <= m_BVH[i].max[2]
+						)
+				);
+			
+			if (containsTri) {
+				addedTris++;
+				//std::cout << "TRI IN BVH!" << std::endl;
+				if (m_BVH[i].triIdx.size() < BVH_CHUNK_SIZE) {
+					//add to bvh "chunk"
+					m_BVH[i].triIdx.push_back(tri);
+				}
+				else {
+					if (currentRedirect < 0 || m_BVH[currentRedirect].triIdx.size() == BVH_CHUNK_SIZE) {
+						//new BVH chunk required!
+						m_BVH.push_back(BVH_BAKE());
+						currentRedirect = m_BVH.size() - 1;
+						chunks++;
+
+						m_BVH[currentRedirect].max[0] = m_BVH[i].max[0];
+						m_BVH[currentRedirect].max[1] = m_BVH[i].max[1];
+						m_BVH[currentRedirect].max[2] = m_BVH[i].max[2];
+
+						m_BVH[currentRedirect].min[0] = m_BVH[i].min[0];
+						m_BVH[currentRedirect].min[1] = m_BVH[i].min[1];
+						m_BVH[currentRedirect].min[2] = m_BVH[i].min[2];
+					}
+					//use current redirect BVH chunk
+					m_BVH[currentRedirect].triIdx.push_back(tri);
+				}
+			}
+		}
+	}
+
+	std::cout << "Added tris to BVH: " << addedTris << std::endl;
+	std::cout << "BVH chunks: " << chunks << std::endl;
+
+	//return totalnumber of non-zero-containing bvh
+	int numFilledBVH = 0;
+
+	//NOTE: m_BVH may contain more than totalMaxnumBVH due to chunking!
+	for (int i = 0; i < m_BVH.size(); i++) {
+		if (m_BVH[i].hasVerts()) numFilledBVH++;
+	}
+
+	std::cout << "Filled " << numFilledBVH << " boxes from " << m_BVH.size() << " total" << std::endl;
+
+	return numFilledBVH;
+}
+
+void OBJLoader::createBVH(BVH* bvhData, int numBVH, Vertex* vertData, int numVerts) {
+
+	int added = 0;
+	//NOTE: m_BVH may contain more than totalMaxNumBVH due to chunking!
+	for (int i = 0; i < m_BVH.size(); i++) {
+		if (m_BVH[i].hasVerts()) {
+			
+			bvhData[added] = BVH();
+			bvhData[added].min[0] = m_BVH[i].min[0];
+			bvhData[added].min[1] = m_BVH[i].min[1];
+			bvhData[added].min[2] = m_BVH[i].min[2];
+
+			bvhData[added].max[0] = m_BVH[i].max[0];
+			bvhData[added].max[1] = m_BVH[i].max[1];
+			bvhData[added].max[2] = m_BVH[i].max[2];
+
+			std::cout << "BVH->max(" << bvhData[added].max[0] << "," << bvhData[added].max[1] << "," << bvhData[added].max[2] << ")" << std::endl;
+			std::cout << "BVH->min(" << bvhData[added].min[0] << "," << bvhData[added].min[1] << "," << bvhData[added].min[2] << ")" << std::endl;
+
+			int numTrisToAdd = m_BVH[i].triIdx.size();
+
+			std::cout << "Tris to add:" << numTrisToAdd << std::endl;
+
+			if (numTrisToAdd > BVH_CHUNK_SIZE) throw new std::exception("Tried to add too many tris to BVH box");
+
+			bvhData[added].numTris = numTrisToAdd;
+
+			for (int t = 0; t < numTrisToAdd; t++) {
+				std::cout << "Adding " << t << "=" << m_BVH[i].triIdx[t] << std::endl;
+				bvhData[added].triIdx[t] = m_BVH[i].triIdx[t];
+			}
+
+			added++;
+		}
+	}
+
+	if (added > numBVH) throw new std::exception("Tried to add more BVH than expected");
+
 }
 
 

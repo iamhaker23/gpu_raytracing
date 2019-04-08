@@ -405,8 +405,9 @@ __device__ void setCol(Texel* col, float r, float g, float b) {
 	//col->col[3] = 0xFFFFFFFF;
 }
 
-__device__ void intersectTris(int depth, Vertex* verts, IntersectionResult* outhit, float factor, int numTris, mat4x4 persp, float orig_x, float orig_y, float orig_z, float ray_x, float ray_y, float ray_z, float maxDist) {
+__device__ void intersectTris(int* vertIdx, Vertex* verts, IntersectionResult* outhit, float factor, int numTris, float orig_x, float orig_y, float orig_z, float ray_x, float ray_y, float ray_z, float maxDist) {
 	
+	/*
 	//Important: reset output, or will persist old hit info in the event of a miss
 	outhit->pos[0] = 0;
 	outhit->pos[1] = 0;
@@ -419,6 +420,7 @@ __device__ void intersectTris(int depth, Vertex* verts, IntersectionResult* outh
 	outhit->normal[2] = 0;
 	outhit->triIndex = -1;
 	outhit->faceDir = 0;
+	*/
 	
 	float minU = -1.0f;
 	float minV = -1.0f;
@@ -432,8 +434,9 @@ __device__ void intersectTris(int depth, Vertex* verts, IntersectionResult* outh
 	raydir[2] = ray_z;
 	float Epsilon = 0.001f;
 
-
-	for (int tri = 0; tri < numTris * 3; tri += 3) {
+	//triangle - 3 index of verts
+	//triangle - 3 index in bvh index list
+	for (int tri = 0; tri < numTris; tri++) {
 
 		//Moller-Trumbore
 		//V1
@@ -446,26 +449,17 @@ __device__ void intersectTris(int depth, Vertex* verts, IntersectionResult* outh
 		vec3 V2 = { 0 };
 		vec3 V3 = { 0 };
 
-		V1[0] = verts[tri + 0].pos[0];
-		V1[1] = verts[tri + 0].pos[1];
-		V1[2] = verts[tri + 0].pos[2];
+		V1[0] = verts[vertIdx[tri]+0].pos[0];
+		V1[1] = verts[vertIdx[tri]+0].pos[1];
+		V1[2] = verts[vertIdx[tri]+0].pos[2];
 
-		V2[0] = verts[tri + 1].pos[0];
-		V2[1] = verts[tri + 1].pos[1];
-		V2[2] = verts[tri + 1].pos[2];
+		V2[0] = verts[vertIdx[tri]+1].pos[0];
+		V2[1] = verts[vertIdx[tri]+1].pos[1];
+		V2[2] = verts[vertIdx[tri]+1].pos[2];
 
-		V3[0] = verts[tri + 2].pos[0];
-		V3[1] = verts[tri + 2].pos[1];
-		V3[2] = verts[tri + 2].pos[2];
-
-		/*
-		if (depth == 1) {
-			mult(persp, V1);
-			mult(persp, V2);
-			mult(persp, V3);
-			mult(persp, raydir);
-		}
-		*/
+		V3[0] = verts[vertIdx[tri]+2].pos[0];
+		V3[1] = verts[vertIdx[tri]+2].pos[1];
+		V3[2] = verts[vertIdx[tri]+2].pos[2];
 
 		/* //IF ALL VERTS ARE BEHIND CAMERA
 		if (V1[2] > 0) V1[2] = -1.0f;
@@ -541,12 +535,11 @@ __device__ void intersectTris(int depth, Vertex* verts, IntersectionResult* outh
 				minT = t;
 				minU = U;
 				minV = V;
-				closestTri = tri;
+				closestTri = vertIdx[tri];
 
 				faceDir = (A < Epsilon) ? -1 : 1;
 			}
 		}
-
 	}
 
 	if (closestTri >= 0){
@@ -604,231 +597,306 @@ __device__ void intersectTris(int depth, Vertex* verts, IntersectionResult* outh
 	*/
 }
 
+__device__ void intersectBVH(BVH* bvh
+	, int numBoxes
+	, Vertex* verts
+	, IntersectionResult* outhit
+	, float factor
+	, int numTris
+	, float orig_x, float orig_y, float orig_z
+	, float ray_x, float ray_y, float ray_z
+	, float maxDist) {
+
+	outhit->pos[0] = 0;
+	outhit->pos[1] = 0;
+	outhit->pos[2] = 0;
+	outhit->col[0] = 0;
+	outhit->col[1] = 0;
+	outhit->col[2] = 0;
+	outhit->normal[0] = 0;
+	outhit->normal[1] = 0;
+	outhit->normal[2] = 0;
+	outhit->triIndex = -1;
+	outhit->faceDir = 0;
+	
+	vec3 raydir = { 0 };
+	raydir[0] = ray_x;
+	raydir[1] = ray_y;
+	raydir[2] = ray_z;
+	float raydirmag = magnitude(raydir);
+	raydir[0] = 1.0f / raydir[0];
+	raydir[1] = 1.0f / raydir[1];
+	raydir[2] = 1.0f / raydir[2];
+
+	for (int i = 0; i < numBoxes; i++) {
+
+		vec3 t0s = { 0 };
+		t0s[0] = ((bvh[i].min[0] - (orig_x)) * (raydir[0]));
+		t0s[1] = ((bvh[i].min[1] - (orig_y)) * (raydir[1]));
+		t0s[2] = ((bvh[i].min[2] - (orig_z)) * (raydir[2]));
+
+		vec3 t1s = { 0 };
+		t1s[0] = ((bvh[i].max[0] - (orig_x)) * (raydir[0]));
+		t1s[1] = ((bvh[i].max[1] - (orig_y)) * (raydir[1]));
+		t1s[2] = ((bvh[i].max[2] - (orig_z)) * (raydir[2]));
+
+		vec3 tsmaller = { 0 };
+		vec3 tbigger = { 0 };
+		if (magnitude(t0s) > magnitude(t1s)) {
+			tsmaller[0] = t1s[0];
+			tsmaller[1] = t1s[1];
+			tsmaller[2] = t1s[2];
+			tbigger[0] = t0s[0];
+			tbigger[1] = t0s[1];
+			tbigger[2] = t0s[2];
+		}
+		else {
+			tsmaller[0] = t0s[0];
+			tsmaller[1] = t0s[1];
+			tsmaller[2] = t0s[2];
+			tbigger[0] = t1s[0];
+			tbigger[1] = t1s[1];
+			tbigger[2] = t1s[2];
+		}
+
+		float tmin = max(tsmaller[0], max(tsmaller[1], tsmaller[2]));
+		float tmax = min(tbigger[0], min(tbigger[1], tbigger[2]));
+		
+		if (tmin < tmax) {
+
+			outhit->col[0] = 1;
+			outhit->col[1] = 1;
+			outhit->col[2] = 0;
+			//check triangles for any hit BVH
+			//Can't ignore further BVH boxes in case of a BVH hit but Tri miss
+			intersectTris(
+				bvh[i].triIdx
+				, verts
+				, outhit
+				, factor
+				, bvh[i].numTris
+				, orig_x, orig_y, orig_z
+				, ray_x, ray_y, ray_z
+				, maxDist);
+		}
+	}
+}
+
 #if SHAPE_MODE==0
 
 //template<int depth>
 __device__ void RaytraceTris(Texel* col
 	, float factor
+	, BVH* bvh
+	, int numBVH
 	, Vertex* verts
 	, int numTris
 	, float ray_x, float ray_y, float ray_z
 	, float orig_x, float orig_y, float orig_z
-	, mat4x4 &persp
-	, IntersectionResult* hitlist)
+	, float light_x, float light_y, float light_z
+	, IntersectionResult* hitlist
+	, int light_mode)
 {
 	
-	intersectTris(1, verts, hitlist, factor, numTris, persp, orig_x, orig_y, orig_z, ray_x, ray_y, ray_z, -1.0f);
+	//intersectTris(1, verts, hitlist, factor, numTris, orig_x, orig_y, orig_z, ray_x, ray_y, ray_z, -1.0f);
+	intersectBVH(bvh, numBVH, verts, hitlist, factor, numTris, orig_x, orig_y, orig_z, ray_x, ray_y, ray_z, -1.0f);
 
 	int tri = hitlist->triIndex;
 	bool inside = (hitlist->faceDir == -1);
 
 	if (tri < 0) {
-		blendCol(col, factor, 150, 160, 200);
+		//miss - background colour (or intersection debug color)
+		if (hitlist->col[0] + hitlist->col[1] + hitlist->col[2] == 0) {
+			blendCol(col, factor, 150, 160, 200);
+		}
+		else {
+			blendCol(col, factor, 255*hitlist->col[0], 255 * hitlist->col[1], 255 * hitlist->col[2]);
+		}
 	}
 	else {
 
-		//last tri is a light to be rendered as solid color
-		if (tri == (numTris - 1) * 3) {
-			setCol(col, 255 * verts[tri].color[0], 255 * verts[tri].color[1], 255 * verts[tri].color[2]);
-		}
-		else {
+		vec3 hitPos = { 0 };
+		hitPos[0] = hitlist->pos[0];
+		hitPos[1] = hitlist->pos[1];
+		hitPos[2] = hitlist->pos[2];
+		vec3 diffCol = { 0 };
+		diffCol[0] = hitlist->col[0];
+		diffCol[1] = hitlist->col[1];
+		diffCol[2] = hitlist->col[2];
 
-			vec3 hitPos = { 0 };
-			hitPos[0] = hitlist->pos[0];
-			hitPos[1] = hitlist->pos[1];
-			hitPos[2] = hitlist->pos[2];
-			vec3 diffCol = { 0 };
-			diffCol[0] = hitlist->col[0];
-			diffCol[1] = hitlist->col[1];
-			diffCol[2] = hitlist->col[2];
+		vec3 lightPos = { 0 };
+		lightPos[0] = light_x;
+		lightPos[1] = light_y;
+		lightPos[2] = light_z;
 
-			vec3 toLight = { 0 };
-			toLight[0] = verts[(numTris - 1) * 3].pos[0] - (hitPos[0]);
-			toLight[1] = verts[(numTris - 1) * 3].pos[1] - (hitPos[1]);
-			toLight[2] = verts[(numTris - 1) * 3].pos[2] - (hitPos[2]);
+		vec3 toLight = { 0 };
+		toLight[0] = lightPos[0] - (hitPos[0]);
+		toLight[1] = lightPos[1] - (hitPos[1]);
+		toLight[2] = lightPos[2] - (hitPos[2]);
 
-			float distToLight = magnitude(toLight);
-			toLight[0] = toLight[0] / distToLight;
-			toLight[1] = toLight[1] / distToLight;
-			toLight[2] = toLight[2] / distToLight;
+		float distToLight = magnitude(toLight);
+		toLight[0] = toLight[0] / distToLight;
+		toLight[1] = toLight[1] / distToLight;
+		toLight[2] = toLight[2] / distToLight;
 
-
+		vec3 nnhit = { 0 };
+		nnhit[0] = hitlist->normal[0];
+		nnhit[1] = hitlist->normal[1];
+		nnhit[2] = hitlist->normal[2];
 			
+		vec3 nnnhit = { 0 };
+		nnnhit[0] = -nnhit[0];
+		nnnhit[1] = -nnhit[1];
+		nnnhit[2] = -nnhit[2];
 
-			//TODO: Pre-computed normals do not work here - do they represent normal in the wrong space?
-
-			vec3 nnhit = { 0 };
-			nnhit[0] = hitlist->normal[0];
-			nnhit[1] = hitlist->normal[1];
-			nnhit[2] = hitlist->normal[2];
-
-			 //normal from OBJ file is already normalised
-			float hitNormalMagnitude = magnitude(nnhit);
-			nnhit[0] = nnhit[0]/ hitNormalMagnitude;
-			nnhit[1] = nnhit[1]/ hitNormalMagnitude;
-			nnhit[2] = nnhit[2]/ hitNormalMagnitude;
-			
-			/*
-			// START NORMAL-ORIENTED BIAS
-			vec3 nnhit = { 0 };
-
-			vec3 ab = { 0 };
-			ab[0] = verts[tri + 1].pos[0] - hitPos[0]; //- verts[tri + 0].pos[0];
-			ab[1] = verts[tri + 1].pos[1] - hitPos[1]; //- verts[tri + 0].pos[1];
-			ab[2] = verts[tri + 1].pos[2] - hitPos[2]; //- verts[tri + 0].pos[2];
-
-			vec3 ac = { 0 };
-			ac[0] = verts[tri + 2].pos[0] - hitPos[0]; // - verts[tri + 0].pos[0];
-			ac[1] = verts[tri + 2].pos[1] - hitPos[1]; //- verts[tri + 0].pos[1];
-			ac[2] = verts[tri + 2].pos[2] - hitPos[2]; //- verts[tri + 0].pos[2];
-
-			nnhit[0] = cross(0, ab, ac);
-			nnhit[1] = cross(1, ab, ac);
-			nnhit[2] = cross(2, ab, ac);
-
-			//TODO: do not account for backface if culling
-			float nnhitmag = magnitude(nnhit);
-			nnhit[0] = nnhit[0] / nnhitmag;
-			nnhit[1] = nnhit[1] / nnhitmag;
-			nnhit[2] = nnhit[2] / nnhitmag;
-
-			//END CALCULATE NORMAL
+		/*
+		intersectTris(2, verts, hitlist, factor, numTris
+			, hitPos[0] + hitlist->normal[0] * 1e-2
+			, hitPos[1] + hitlist->normal[1] * 1e-2
+			, hitPos[2] + hitlist->normal[2] * 1e-2
+			, toLight[0], toLight[1], toLight[2]
+			, distToLight);
 			*/
-			
-			vec3 nnnhit = { 0 };
-			nnnhit[0] = -1 * nnhit[0];
-			nnnhit[1] = -1 * nnhit[1];
-			nnnhit[2] = -1 * nnhit[2];
 
-			intersectTris(2, verts, hitlist, factor, numTris, persp
+		intersectBVH(bvh, numBVH, verts, hitlist, factor, numTris
+			, hitPos[0] + hitlist->normal[0] * 1e-2
+			, hitPos[1] + hitlist->normal[1] * 1e-2
+			, hitPos[2] + hitlist->normal[2] * 1e-2
+			, toLight[0], toLight[1], toLight[2]
+			, distToLight);
+
+
+		int shadowCaster = hitlist->triIndex;
+			
+		vec3 reflCol = { 0 };
+		vec3 refrCol = { 0 };
+
+		vec3 raydir = { 0 };
+		raydir[0] = ray_x;
+		raydir[1] = ray_y;
+		raydir[2] = ray_z;
+		float raydirmag = magnitude(raydir);
+		raydir[0] = ray_x / raydirmag;
+		raydir[1] = ray_y / raydirmag;
+		raydir[2] = ray_z / raydirmag;
+
+		vec3 nraydir = { 0 };
+		nraydir[0] = -ray_x/ raydirmag;
+		nraydir[1] = -ray_y/ raydirmag;
+		nraydir[2] = -ray_z/ raydirmag;
+		
+		float fresneleffect = 0.5f;
+		float cosi = dot(raydir, nnhit);
+
+		if (light_mode >= 2) {
+
+			
+			float facingratio = dot(nnhit, nraydir);
+			fresneleffect = ((1 - facingratio) * (1 - facingratio)*(0.9f)) + 0.1f;
+			/*
+			
+			//TODO: Fresnel refraction is not working with triangles...
+			// Using "Fake" reflections instead...
+			float eta = 1.0f / 1.02f;
+			if (cosi < 0) { 
+				cosi = -cosi;
+				inside = true;
+			}
+			else { 
+				eta = 1.02f;
+				inside = false;
+			}
+
+			if (cosi > 1) cosi = 1;
+			
+			float k = 1 - eta * eta * (1 - cosi * cosi);
+			*/
+
+
+			float eta = 1.02f;//(inside) ? 1.02f : 1.0f/1.02f;
+
+			vec3 refrdir = { 0 };
+
+			//refrdir[0] = (k < 0) ? 0 : (eta * raydir[0]) + (eta * cosi - sqrtf(k)) * nnhit[0];
+			//refrdir[1] = (k < 0) ? 0 : (eta * raydir[1]) + (eta * cosi - sqrtf(k)) * nnhit[1];
+			//refrdir[2] = (k < 0) ? 0 : (eta * raydir[2]) + (eta * cosi - sqrtf(k)) * nnhit[2];
+
+			refrdir[0] = (eta * raydir[0]);// +((eta * (facingratio - k)) * ((inside) ? nnnhit[0] : nnhit[0]));
+			refrdir[1] = (eta * raydir[1]);// +((eta * (facingratio - k)) * ((inside) ? nnnhit[1] : nnhit[1]));
+			refrdir[2] = (eta * raydir[2]);// +((eta * (facingratio - k)) * ((inside) ? nnnhit[2] : nnhit[2]));
+
+			//normalise (and invert y)
+			float refrMag = magnitude(refrdir);
+			refrdir[0] = refrdir[0] / refrMag;
+			refrdir[1] = refrdir[1] / refrMag;
+			refrdir[2] = refrdir[2] / refrMag;
+
+			/*
+			intersectTris(2, verts, hitlist, factor, numTris
 				, hitPos[0] + hitlist->normal[0] * 1e-2
 				, hitPos[1] + hitlist->normal[1] * 1e-2
 				, hitPos[2] + hitlist->normal[2] * 1e-2
-				, toLight[0], toLight[1], toLight[2]
-				, distToLight);
+				, refrdir[0], refrdir[1], refrdir[2]
+				, -1.0f);
+				*/
 
-			int shadowCaster = hitlist->triIndex;
-			
-			vec3 reflCol = { 0 };
-			vec3 refrCol = { 0 };
-			float fresneleffect = -1.0f;
+			intersectBVH(bvh, numBVH, verts, hitlist, factor, numTris
+				, hitPos[0] + hitlist->normal[0] * 1e-2
+				, hitPos[1] + hitlist->normal[1] * 1e-2
+				, hitPos[2] + hitlist->normal[2] * 1e-2
+				, refrdir[0], refrdir[1], refrdir[2]
+				, -1.0f);
 
-			vec3 raydir = { 0 };
-			raydir[0] = ray_x;
-			raydir[1] = ray_y;
-			raydir[2] = ray_z;
-			float raydirmag = magnitude(raydir);
-			raydir[0] = ray_x / raydirmag;
-			raydir[1] = ray_y / raydirmag;
-			raydir[2] = ray_z / raydirmag;
-
-			vec3 nraydir = { 0 };
-			nraydir[0] = -ray_x/ raydirmag;
-			nraydir[1] = -ray_y/ raydirmag;
-			nraydir[2] = -ray_z/ raydirmag;
-
-			float facingratio = dot(nnhit, nraydir);
-			fresneleffect = ((1 - facingratio) * (1 - facingratio)*(0.9f)) + 0.1f;
-
-			//if (TRI IS REFRACTIVE) {
-
-				float ior = 1.01f;
-				float eta = (inside) ? ior : 1.0f / ior;
-
-				float cosi = abs(dot(nnhit, raydir));
-				float k = 1 - (eta * eta * (1 - cosi * cosi));
-
-				vec3 refrdir = { 0 };
-
-				refrdir[0] = (eta * raydir[0]) + ((eta * (cosi - k)) * ((inside) ? nnnhit[0] : nnhit[0]));
-				refrdir[1] = (eta * raydir[1]) + ((eta * (cosi - k)) * ((inside) ? nnnhit[1] : nnhit[1]));
-				refrdir[2] = (eta * raydir[2]) + ((eta * (cosi - k)) * ((inside) ? nnnhit[2] : nnhit[2]));
-
-				//normalise (and invert y)
-				float refrMag = magnitude(refrdir);
-				refrdir[0] = refrdir[0] / refrMag;
-				refrdir[1] = refrdir[1] / refrMag;
-				refrdir[2] = refrdir[2] / refrMag;
-
-				intersectTris(2, verts, hitlist, factor, numTris, persp
-					, hitPos[0] + hitlist->normal[0] * 1e-2
-					, hitPos[1] + hitlist->normal[1] * 1e-2
-					, hitPos[2] + hitlist->normal[2] * 1e-2
-					, refrdir[0], refrdir[1], refrdir[2]
-					, -1.0f);
-
-				refrCol[0] = hitlist->col[0];
-				refrCol[1] = hitlist->col[1];
-				refrCol[2] = hitlist->col[2];
-			//}
-
-			//if (TRI IS REFLECTIVE) {
-
-				float rayhitdot = dot(raydir, ((inside) ? nnnhit: nnhit));
-
-				vec3 refldir = { 0 };
-				refldir[0] = raydir[0] - (((inside) ? nnnhit[0] : nnhit[0]) * 2 * rayhitdot);
-				refldir[1] = raydir[1] - (((inside) ? nnnhit[1] : nnhit[1]) * 2 * rayhitdot);
-				refldir[2] = raydir[2] - (((inside) ? nnnhit[2] : nnhit[2]) * 2 * rayhitdot);
-
-				intersectTris(2, verts, hitlist, factor, numTris, persp
-					, hitPos[0] + hitlist->normal[0] * 1e-2
-					, hitPos[1] + hitlist->normal[1] * 1e-2
-					, hitPos[2] + hitlist->normal[2] * 1e-2
-					, refldir[0], refldir[1], refldir[2]
-					, -1.0f);
-
-				reflCol[0] = hitlist->col[0];
-				reflCol[1] = hitlist->col[1];
-				reflCol[2] = hitlist->col[2];
-
-				fresneleffect = (fresneleffect < 0.0f) ? fresneleffect : 0.5f;
-			//}
-
-
-			//TODO: Shadow being cast from light or is it broken refraction!?
-
-
-			//TODO: optimise this?
-			//shadows can't be from self, light or nothing
-			if (shadowCaster != -1 && shadowCaster != tri && shadowCaster != (numTris - 1) * 3){
-			
-				//hue-swap shadow colours
-				setCol(col
-					, 255 * diffCol[0] * verts[3 * (numTris - 1)].color[2] * 0.05f
-					, 255 * diffCol[1] * verts[3 * (numTris - 1)].color[1] * 0.05f
-					, 255 * diffCol[2] * verts[3 * (numTris - 1)].color[0] * 0.05f);
-
-			}
-			else {
-
-				vec3 ld = { 0 };
-				ld[0] = verts[3 * (numTris - 1)].pos[0] - hitPos[0];
-				ld[1] = verts[3 * (numTris - 1)].pos[1] - hitPos[1];
-				ld[2] = verts[3 * (numTris - 1)].pos[2] - hitPos[2];
-
-				float ldmag = magnitude(ld);
-				vec3 nld = { 0 };
-				nld[0] = ld[0] / ldmag;
-				nld[1] = ld[1] / ldmag;
-				nld[2] = ld[2] / ldmag;
-
-				float m = max(0.05f, max(dot(nld, nnhit), dot(nld, nnnhit)));
-
-				setCol(col
-					, 255 * diffCol[0] * verts[3 * (numTris - 1)].color[0] * m
-					, 255 * diffCol[1] * verts[3 * (numTris - 1)].color[1] * m
-					, 255 * diffCol[2] * verts[3 * (numTris - 1)].color[2] * m);
-
-				blendCol(col, 0.5f
-					, 255 * ((1.0f - (fresneleffect)) * reflCol[0] + (fresneleffect) * refrCol[0])
-					, 255 * ((1.0f - (fresneleffect)) * reflCol[1] + (fresneleffect) * refrCol[1])
-					, 255 * ((1.0f - (fresneleffect)) * reflCol[2] + (fresneleffect) * refrCol[2]) 
-				);
-
-			}
-
+			refrCol[0] = hitlist->col[0];
+			refrCol[1] = hitlist->col[1];
+			refrCol[2] = hitlist->col[2];
 		}
+
+		if (light_mode >= 1) {
+
+			vec3 refldir = { 0 };
+			refldir[0] = raydir[0] - (nnhit[0] * 2 * cosi);
+			refldir[1] = raydir[1] - (nnhit[1] * 2 * cosi);
+			refldir[2] = raydir[2] - (nnhit[2] * 2 * cosi);
+
+			/*
+			intersectTris(2, verts, hitlist, factor, numTris
+				, hitPos[0] + hitlist->normal[0] * 1e-2
+				, hitPos[1] + hitlist->normal[1] * 1e-2
+				, hitPos[2] + hitlist->normal[2] * 1e-2
+				, refldir[0], refldir[1], refldir[2]
+				, -1.0f);
+				*/
+
+			intersectBVH(bvh, numBVH, verts, hitlist, factor, numTris
+				, hitPos[0] + hitlist->normal[0] * 1e-2
+				, hitPos[1] + hitlist->normal[1] * 1e-2
+				, hitPos[2] + hitlist->normal[2] * 1e-2
+				, refldir[0], refldir[1], refldir[2]
+				, -1.0f);
+
+			reflCol[0] = hitlist->col[0];
+			reflCol[1] = hitlist->col[1];
+			reflCol[2] = hitlist->col[2];
+		}
+
+		float m = 0.05f;
+
+		if (shadowCaster == -1 || shadowCaster == tri) {
+			m = max(m, max(abs(dot(toLight, nnhit)), abs(dot(toLight, nnnhit))));
+		}
+
+		setCol(col
+			, 255 * diffCol[0] * m
+			, 255 * diffCol[1] * m
+			, 255 * diffCol[2] * m);
+
+		blendCol(col, 0.5f,
+		//setCol(col, 
+			 255 * ((1.0f - (fresneleffect)) * reflCol[0] + (fresneleffect) * refrCol[0]) * m
+			, 255 * ((1.0f - (fresneleffect)) * reflCol[1] + (fresneleffect) * refrCol[1]) * m
+			, 255 * ((1.0f - (fresneleffect)) * reflCol[2] + (fresneleffect) * refrCol[2]) * m
+		);
 	}
 }
 /*
@@ -1173,7 +1241,15 @@ __global__ void update_vertex_data(Vertex* verts, int numTris) {
 }
 */
 
-__global__ void get_raytraced_pixels(Texel* pixels, Vertex* verts, int numTris, Sphere* spheres, int numSpheres, float cam_x, float cam_y, float cam_z, int frame, int squareDim, float factor, IntersectionResult* hitlist) {
+__global__ void get_raytraced_pixels(Texel* pixels
+	, BVH* bvh, int numBVH
+	, Vertex* verts, int numTris
+	, Sphere* spheres, int numSpheres
+	, float cam_x, float cam_y, float cam_z
+	, float light_x, float light_y, float light_z
+	, int frame, int squareDim, float factor
+	, int light_mode
+	, IntersectionResult* hitlist) {
 
 	unsigned int raw_x = (blockIdx.x * blockDim.x + threadIdx.x);
 	unsigned int raw_y = (blockIdx.y * blockDim.y + threadIdx.y);
@@ -1259,52 +1335,27 @@ __global__ void get_raytraced_pixels(Texel* pixels, Vertex* verts, int numTris, 
 #elif SHAPE_MODE == 0
 			//START PERSPECTIVE MATRIX
 	//TODO: calculate on host and copy to CUDA device once/when changed
-		mat4x4 persp = { 0 };
+		
 		//aspect ratio: x/y
 
-		const float ar = 1;
-		const float zNear = 0;
-		const float zFar = -1500;
-		const float zRange = zNear - zFar;
-		//negative fov for -z facing camera
-		float tanHalfFOV = tanf((-2.0f)*(3.14159f / 180.0f));
-
-		persp[0][0] = 1.0f / (tanHalfFOV * ar);
-		persp[0][1] = 0.0f;
-		persp[0][2] = 0.0f;
-		persp[0][3] = 0.0f;
-
-		persp[1][0] = 0.0f;
-		persp[1][1] = 1.0f / tanHalfFOV;
-		persp[1][2] = 0.0f;
-		persp[1][3] = 0.0f;
-
-		persp[2][0] = 0.0f;
-		persp[2][1] = 0.0f;
-		persp[2][2] = (-zNear - zFar) / zRange;
-		persp[2][3] = 2.0f * zFar * zNear / zRange;
-
-		persp[3][0] = 0.0f;
-		persp[3][1] = 0.0f;
-		persp[3][2] = 1.0f;
-		persp[3][3] = 0.0f;
-
-		//END PERSPECTIVE MATRIX
+		const float zFar = -900;
 
 		RaytraceTris(
 			//image
 			&pixels[(y_int * WIDTH) + (x_int)]
 			//factor to keep old color
 			, factor
+			//bvh
+			, bvh, numBVH
 			//verts
 			, verts, numTris
-			//cam projection (smaller z = larger fov)
+			//raydir (also acts as cam projection where smaller z = larger fov)
 			, x, y, zFar
 			//cam pos
 			, cam_x + (WIDTH / -2.0f), cam_y + (HEIGHT / -2.0f), cam_z + 3000
-			, persp
+			, light_x, light_y, light_z
 			, &hitlist[(raw_y * (WIDTH/(squareDim))) + (raw_x)]
-			//, &hitlist[(y_int * WIDTH) + (x_int)]
+			, light_mode
 			);
 #endif
 	}
@@ -1321,11 +1372,15 @@ const int NUM_SPHERES = 6;
 //const int NUM_TRIS = 5;
 
 int NUM_TRIS = 0;
+int NUM_BVH = 0;
 
 const int NUM_LIGHTS = 2;
 
 void* cudaVerts;
 Vertex* vertData;
+
+void* cudaBVH;
+BVH* bvhData;
 
 void* cudaHitList;
 IntersectionResult* hitListData;
@@ -1333,10 +1388,18 @@ IntersectionResult* hitListData;
 //Player State
 bool spheresChanged;
 bool vertsChanged;
-float cam_x = 0.0f;
-float cam_y = -1000.0f;
-float cam_z = -500.0f;
-int camChanged = 0;
+float cam_x = -20.0f;
+float cam_y = -1200.0f;
+float cam_z = 1000.0f;
+
+//0 = diffuse, 1 = refl, 2 = refl+refr
+int light_mode = 0;
+
+float light_x = 0.0f;
+float light_y = -1000.0f;
+float light_z = -1500.0f;
+
+int framesRefreshRequired = 0;
 
 float speed = 0.02f;
 
@@ -1348,7 +1411,7 @@ int frameStep = (DEFERRED_REFRESH_SQUARE_DIM == 1) ? 0 : 1;
 //dimensions of refresh squares (square to get number of subframes)
 int defferedSquareDim = DEFERRED_REFRESH_SQUARE_DIM;
 
-bool keys[10] = { 0 };
+bool keys[13] = { 0 };
 
 std::chrono::system_clock::time_point WIN_CTIME = std::chrono::system_clock::now();
 int oldTicks = 0;
@@ -1390,6 +1453,16 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
 		case (GLFW_KEY_Z):
 			keys[9] = false;
 			break;
+		case (GLFW_KEY_X):
+			keys[10] = false;
+			break;
+		case (GLFW_KEY_C):
+			keys[11] = false;
+			break;
+		//toggle key is reset when handled
+		//case (GLFW_KEY_TAB):
+			//keys[12] = false;
+			//break;
 		default:
 			break;
 		}
@@ -1425,6 +1498,15 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
 			break;
 		case (GLFW_KEY_Z):
 			keys[9] = true;
+			break;
+		case (GLFW_KEY_X):
+			keys[10] = true;
+			break;
+		case (GLFW_KEY_C):
+			keys[11] = true;
+			break;
+		case (GLFW_KEY_TAB):
+			keys[12] = true;
 			break;
 		default:
 			break;
@@ -2776,11 +2858,19 @@ private:
 		vertData = (Vertex*)malloc(numVerts * sizeof(Vertex));
 		OBJLoader::loadVertices(vertData, numVerts);
 
+		int numBVH = OBJLoader::countBVHNeeded(vertData, numVerts, &bvhData);
+		bvhData = (BVH*)malloc(numBVH * sizeof(BVH));
+		OBJLoader::createBVH(bvhData, numBVH, vertData, numVerts);
+
 		NUM_TRIS = numVerts / 3;
+		NUM_BVH = numBVH;
 
 		//Transfer vert data to GPU
 		checkCudaErrors(cudaMallocManaged((void**)&cudaVerts, numVerts * sizeof(Vertex), cudaMemAttachGlobal));
 		checkCudaErrors(cudaMemcpy(cudaVerts, vertData, numVerts * sizeof(Vertex), cudaMemcpyHostToDevice));
+
+		checkCudaErrors(cudaMallocManaged((void**)&cudaBVH, numBVH * sizeof(BVH), cudaMemAttachGlobal));
+		checkCudaErrors(cudaMemcpy(cudaBVH, bvhData, numBVH * sizeof(BVH), cudaMemcpyHostToDevice));
 
 
 		//Initialise memory required to store intersection results
@@ -3119,35 +3209,60 @@ private:
 			spheres[2].center[1] += (keys[0]) ? -speed : speed;
 			spheresChanged = true;
 #elif SHAPE_MODE == 0
-			vertsChanged = true;
-			vertData[((NUM_TRIS - 1) * 3) + 0].pos[2] += (keys[0]) ? -speed : speed;
-			vertData[((NUM_TRIS - 1) * 3) + 1].pos[2] += (keys[0]) ? -speed : speed;
-			vertData[((NUM_TRIS - 1) * 3) + 2].pos[2] += (keys[0]) ? -speed : speed;
+			//vertsChanged = true;
+			//vertData[((NUM_TRIS - 1) * 3) + 0].pos[2] += (keys[0]) ? -speed : speed;
+			//vertData[((NUM_TRIS - 1) * 3) + 1].pos[2] += (keys[0]) ? -speed : speed;
+			//vertData[((NUM_TRIS - 1) * 3) + 2].pos[2] += (keys[0]) ? -speed : speed;
+			light_z += (keys[0]) ? -speed : speed;
 #endif
 		}
 		if (keys[6] || keys[7]) {
-
 #if SHAPE_MODE == 1
 			spheres[2].center[2] += (keys[6]) ? -speed : speed;
 			spheresChanged = true;
 #elif SHAPE_MODE == 0
-			vertsChanged = true;
-			vertData[((NUM_TRIS - 1) * 3) + 0].pos[1] += (keys[6]) ? -speed : speed;
-			vertData[((NUM_TRIS - 1) * 3) + 1].pos[1] += (keys[6]) ? -speed : speed;
-			vertData[((NUM_TRIS - 1) * 3) + 2].pos[1] += (keys[6]) ? -speed : speed;
+			//vertsChanged = true;
+			//vertData[((NUM_TRIS - 1) * 3) + 0].pos[1] += (keys[6]) ? -speed : speed;
+			//vertData[((NUM_TRIS - 1) * 3) + 1].pos[1] += (keys[6]) ? -speed : speed;
+			//vertData[((NUM_TRIS - 1) * 3) + 2].pos[1] += (keys[6]) ? -speed : speed;
+			light_y += (keys[6]) ? -speed : speed;
 #endif
+		}
+		if (keys[10] || keys[11]) {
+			light_x += (keys[10]) ? -speed : speed;
 		}
 		if (keys[2] || keys[3]) {
 			cam_x += (keys[2]) ? -speed : speed;
-			camChanged = DEFERRED_REFRESH_SQUARE_DIM * DEFERRED_REFRESH_SQUARE_DIM;
 		}
 		if (keys[4] || keys[5]) {
 			cam_y += (keys[4]) ? -speed : speed;
-			camChanged = DEFERRED_REFRESH_SQUARE_DIM * DEFERRED_REFRESH_SQUARE_DIM;
 		}
 		if (keys[8] || keys[9]) {
 			cam_z += (keys[8]) ? -speed : speed;
-			camChanged = DEFERRED_REFRESH_SQUARE_DIM * DEFERRED_REFRESH_SQUARE_DIM;
+		}
+
+		if (keys[0] ||
+			keys[1] ||
+			keys[2] ||
+			keys[3] ||
+			keys[4] ||
+			keys[5] ||
+			keys[6] ||
+			keys[7] ||
+			keys[8] ||
+			keys[9] ||
+			keys[10] ||
+			keys[11] ||
+			keys[12]) {
+
+			//forces next frame to render if any changes are made.
+
+			framesRefreshRequired = DEFERRED_REFRESH_SQUARE_DIM * DEFERRED_REFRESH_SQUARE_DIM;
+		}
+
+		if (keys[12]) {
+			keys[12] = false;
+			light_mode = (light_mode == 2) ? 0 : light_mode+1;
 		}
 
 		std::chrono::system_clock::time_point cNow = std::chrono::system_clock::now();
@@ -3157,7 +3272,7 @@ private:
 		//std::ratio<1, 100> gives 50fps
 		//std::ratio<1, 60> gives 30fps
 		//std::ratio<1, 70> gives 35fps
-		int ticks = (int)(std::chrono::duration<float, std::ratio<1, 200>>(cNow - WIN_CTIME).count());
+		int ticks = (int)(std::chrono::duration<float, std::ratio<1, 120>>(cNow - WIN_CTIME).count());
 
 		if (((ticks % 2 == 1) && ticks != oldTicks)) {
 			WIN_CTIME = cNow;
@@ -3380,7 +3495,7 @@ private:
 		if (loadFromFile) {
 			int texWidth, texHeight, texChannels;
 
-			pixels = (stbi_uc*)stbi_load("texture.jpg", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+			pixels = (stbi_uc*)stbi_load("Assets/texture.jpg", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
 
 			if (!pixels) {
 				throw std::runtime_error("failed to load texture image!");
@@ -3769,8 +3884,8 @@ private:
 
 		if (spheresChanged) {
 			spheresChanged = false;
-			//Hijack camchanged to update frame after sphere data changes
-			camChanged = DEFERRED_REFRESH_SQUARE_DIM * DEFERRED_REFRESH_SQUARE_DIM;
+			//Hijack framesRefreshRequired to update frame after sphere data changes
+			framesRefreshRequired = DEFERRED_REFRESH_SQUARE_DIM * DEFERRED_REFRESH_SQUARE_DIM;
 			checkCudaErrors(
 				cudaMemcpyAsync(
 					cudaSpheres
@@ -3782,12 +3897,12 @@ private:
 			);
 		}
 
-#elif SHAPE_MODE == 0
+/*#elif SHAPE_MODE == 0
 
 		if (vertsChanged) {
 			vertsChanged = false;
-			//Hijack camchanged to update frame after vert data changes
-			camChanged = DEFERRED_REFRESH_SQUARE_DIM * DEFERRED_REFRESH_SQUARE_DIM;
+			//Hijack framesRefreshRequired to update frame after vert data changes
+			framesRefreshRequired = DEFERRED_REFRESH_SQUARE_DIM * DEFERRED_REFRESH_SQUARE_DIM;
 			checkCudaErrors(
 				cudaMemcpyAsync(
 					cudaVerts
@@ -3798,7 +3913,7 @@ private:
 				)
 			);
 		}
-
+		*/
 #endif
 
 		//Render whole image
@@ -3806,23 +3921,25 @@ private:
 		dim3 grid(WIDTH / (16 * DEFERRED_REFRESH_SQUARE_DIM), HEIGHT / (16 * DEFERRED_REFRESH_SQUARE_DIM), 1);
 
 		//TODO: will not update when spheres changed, i.e. when data asynchronously uploaded with cudaMemcpyAsync()
-		if (camChanged != 0) {
+		if (framesRefreshRequired != 0) {
 
 			//make sure to complete the "deferred refresh" cycle in the event of freezeframe, i.e. when no changes to render
-			camChanged--;
+			framesRefreshRequired--;
 
 			get_raytraced_pixels << <grid, block, 0, streamToRun >> > (
 				pixelData
+				, (BVH*)cudaBVH
+				, NUM_BVH
 				, (Vertex*)cudaVerts
 				, NUM_TRIS
 				, (Sphere*)cudaSpheres
 				, NUM_SPHERES
-				, cam_x
-				, cam_y
-				, cam_z
+				, cam_x, cam_y, cam_z
+				, light_x, light_y, light_z
 				, frameStep
 				, DEFERRED_REFRESH_SQUARE_DIM
 				, 1.0f
+				, light_mode
 				,(IntersectionResult*)cudaHitList);
 
 			//keep count of what sub-frame is being rendered
