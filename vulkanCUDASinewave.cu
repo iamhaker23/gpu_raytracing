@@ -72,6 +72,7 @@
 #define HEIGHT 1024
 #define SHAPE_MODE 0
 #define BVH_DEBUG_VISUALISATION 0
+#define CULLING 1
 
  //NOTE: only support power-of-two DRSD values (for maximising GPU utilisation)
 //#define DEFERRED_REFRESH_SQUARE_DIM 1
@@ -451,17 +452,19 @@ __device__ void intersectTris(int* vertIdx, Vertex* verts, IntersectionResult* o
 		vec3 V2 = { 0 };
 		vec3 V3 = { 0 };
 
-		V1[0] = verts[vertIdx[tri]+0].pos[0];
-		V1[1] = verts[vertIdx[tri]+0].pos[1];
-		V1[2] = verts[vertIdx[tri]+0].pos[2];
+		//2,1,0 to reverse face loop (for OBJ exported from blender)
+
+		V1[0] = verts[vertIdx[tri]+2].pos[0];
+		V1[1] = verts[vertIdx[tri]+2].pos[1];
+		V1[2] = verts[vertIdx[tri]+2].pos[2];
 
 		V2[0] = verts[vertIdx[tri]+1].pos[0];
 		V2[1] = verts[vertIdx[tri]+1].pos[1];
 		V2[2] = verts[vertIdx[tri]+1].pos[2];
 
-		V3[0] = verts[vertIdx[tri]+2].pos[0];
-		V3[1] = verts[vertIdx[tri]+2].pos[1];
-		V3[2] = verts[vertIdx[tri]+2].pos[2];
+		V3[0] = verts[vertIdx[tri]+0].pos[0];
+		V3[1] = verts[vertIdx[tri]+0].pos[1];
+		V3[2] = verts[vertIdx[tri]+0].pos[2];
 
 		/* //IF ALL VERTS ARE BEHIND CAMERA
 		if (V1[2] > 0) V1[2] = -1.0f;
@@ -493,12 +496,12 @@ __device__ void intersectTris(int* vertIdx, Vertex* verts, IntersectionResult* o
 
 		float A = dot(edge1, h);
 
-//#ifdef CULLING 
-		//if (A < Epsilon) continue;
-//#else 
+#ifdef CULLING 
+		if (A < Epsilon) continue;
+#endif
 		//nohit
 		if (A < Epsilon && A > -Epsilon) continue;
-//#endif
+
 
 
 		//s=rayOrigin-V1
@@ -715,7 +718,7 @@ __device__ void RaytraceTris(Texel* col
 	intersectBVH(bvh, numBVH, verts, hitlist, factor, numTris, orig_x, orig_y, orig_z, ray_x, ray_y, ray_z, -1.0f);
 
 	int tri = hitlist->triIndex;
-	bool inside = (hitlist->faceDir == -1);
+	bool inside = (hitlist->faceDir == -1) ? 1 : 0;
 
 	if (tri < 0) {
 		//miss - background colour (or intersection debug color)
@@ -752,11 +755,31 @@ __device__ void RaytraceTris(Texel* col
 		toLight[1] = toLight[1] / distToLight;
 		toLight[2] = toLight[2] / distToLight;
 
+
 		vec3 nnhit = { 0 };
+		nnhit[0] = hitlist->normal[0];
+		nnhit[1] = hitlist->normal[1];
+		nnhit[2] = hitlist->normal[2];
+		float nnhitmag = magnitude(nnhit);
+		nnhit[0] = nnhit[0] / nnhitmag;
+		nnhit[0] = nnhit[1] / nnhitmag;
+		nnhit[0] = nnhit[2] / nnhitmag;
+
+		vec3 raydir = { 0 };
+		raydir[0] = ray_x;
+		raydir[1] = ray_y;
+		raydir[2] = ray_z;
+		float raydirmag = magnitude(raydir);
+		raydir[0] = ray_x / raydirmag;
+		raydir[1] = ray_y / raydirmag;
+		raydir[2] = ray_z / raydirmag;
+
+		//inside = (dot(raydir, nnhit) > 0) ? 1 : 0;
+
 		nnhit[0] = hitlist->normal[0] * ((inside) ? 1 : -1);
 		nnhit[1] = hitlist->normal[1] * ((inside) ? 1 : -1);
 		nnhit[2] = hitlist->normal[2] * ((inside) ? 1 : -1);
-			
+
 		vec3 nnnhit = { 0 };
 		nnnhit[0] = -nnhit[0] * ((inside) ? 1 : -1);
 		nnnhit[1] = -nnhit[1] * ((inside) ? 1 : -1);
@@ -780,18 +803,22 @@ __device__ void RaytraceTris(Texel* col
 
 
 		int shadowCaster = hitlist->triIndex;
-			
-		vec3 reflCol = { 0 };
-		vec3 refrCol = { 0 };
 
-		vec3 raydir = { 0 };
-		raydir[0] = ray_x;
-		raydir[1] = ray_y;
-		raydir[2] = ray_z;
-		float raydirmag = magnitude(raydir);
-		raydir[0] = ray_x / raydirmag;
-		raydir[1] = ray_y / raydirmag;
-		raydir[2] = ray_z / raydirmag;
+		float m = 0.05f;
+
+		if (shadowCaster == -1 || shadowCaster == tri) {
+			m = max(m, abs(max(dot(toLight, nnhit), dot(toLight, nnnhit))));
+		}
+
+		/*
+		setCol(col
+			, 255 * diffCol[0] * m
+			, 255 * diffCol[1] * m
+			, 255 * diffCol[2] * m);
+			*/
+
+		vec3 reflCol = { 0.5f, 0.5f, 0.5f};
+		vec3 refrCol = { 0.5f, 0.5f, 0.5f};
 
 		vec3 nraydir = { 0 };
 		nraydir[0] = -ray_x / raydirmag;
@@ -799,13 +826,14 @@ __device__ void RaytraceTris(Texel* col
 		nraydir[2] = -ray_z / raydirmag;
 
 		float facingratio = dot(nraydir, nnhit);
-		float fresneleffect = (0.9f * (1 - facingratio) * (1 - facingratio) * (1 - facingratio)) + 0.1f;
+		float fresneleffect = (light_mode == 0) ? 1.0f : max(0.1f, abs((0.9f * (1 - facingratio) * (1 - facingratio) * (1 - facingratio)) + 0.1f));
 
 		float cosi = dot(raydir, nnnhit);
 
+		float transp = 1.0f;
 		if (light_mode >= 2) {
 
-			float eta = (inside) ? 1.01f : 1.0f/1.01f;
+			float eta = (inside) ? 1.01f : 1.0f / 1.01f;
 
 			vec3 refrdir = { 0 };
 
@@ -814,10 +842,18 @@ __device__ void RaytraceTris(Texel* col
 			//refrdir[2] = (k < 0) ? 0 : (eta * raydir[2]) + (eta * cosi - sqrtf(k)) * nnhit[2];
 
 
-			float k = 1 - eta * eta * (1 - cosi * cosi);
-			refrdir[0] = (raydir[0] * eta) + (nnhit[0] * (eta *  cosi - (k)));
-			refrdir[1] = (raydir[1] * eta) + (nnhit[1] * (eta *  cosi - (k)));
-			refrdir[2] = (raydir[2] * eta) + (nnhit[2] * (eta *  cosi - (k)));
+			//ACTUAL REFRACTION
+			//float k = max(0.0f, 1 - eta * eta * (1 - cosi * cosi));
+			//refrdir[0] = (raydir[0] * eta) + (nnhit[0] * ((eta * cosi * cosi) - sqrtf(k)));
+			//refrdir[1] = (raydir[1] * eta) + (nnhit[1] * ((eta * cosi * cosi) - sqrtf(k)));
+			//refrdir[2] = (raydir[2] * eta) + (nnhit[2] * ((eta * cosi * cosi) - sqrtf(k)));
+			
+			
+			//This does straight-through transparency
+			refrdir[0] = (raydir[0] );
+			refrdir[1] = (raydir[1] );
+			refrdir[2] = (raydir[2] );
+			
 
 			//refrdir[0] = (eta * raydir[0]);// +((eta * (facingratio - k)) * ((inside) ? nnnhit[0] : nnhit[0]));
 			//refrdir[1] = (eta * raydir[1]);// +((eta * (facingratio - k)) * ((inside) ? nnnhit[1] : nnhit[1]));
@@ -848,6 +884,15 @@ __device__ void RaytraceTris(Texel* col
 			refrCol[0] = hitlist->col[0];
 			refrCol[1] = hitlist->col[1];
 			refrCol[2] = hitlist->col[2];
+
+			/*
+			blendCol(col, (1 - fresneleffect)
+				, 255 * (refrCol[0] * transp)
+				, 255 * (refrCol[1] * transp)
+				, 255 * (refrCol[2] * transp)
+			);
+			*/
+
 		}
 
 		if (light_mode == 1) {
@@ -878,22 +923,31 @@ __device__ void RaytraceTris(Texel* col
 			reflCol[0] = hitlist->col[0];
 			reflCol[1] = hitlist->col[1];
 			reflCol[2] = hitlist->col[2];
+
+			/*
+			blendCol(col, fresneleffect
+				, 255 * (reflCol[0] * fresneleffect)
+				, 255 * (reflCol[1] * fresneleffect)
+				, 255 * (reflCol[2] * fresneleffect)
+			);
+			*/
 		}
 
-		float m = 0.05f;
+		diffCol[0] = diffCol[0] * ((reflCol[0] * fresneleffect) + (refrCol[0] * (1 - fresneleffect)*transp)) * m;
+		diffCol[1] = diffCol[1] * ((reflCol[1] * fresneleffect) + (refrCol[1] * (1 - fresneleffect)*transp)) * m;
+		diffCol[2] = diffCol[2] * ((reflCol[2] * fresneleffect) + (refrCol[2] * (1 - fresneleffect)*transp)) * m;
+		
+		//float colMag = magnitude(diffCol);
+		//diffCol[0] = diffCol[0] / colMag;
+		//diffCol[1] = diffCol[1] / colMag;
+		//diffCol[2] = diffCol[2] / colMag;
 
-		if (shadowCaster == -1 || shadowCaster == tri) {
-			m = max(m, abs(max(dot(toLight, nnhit), dot(toLight, nnnhit))));
-		}
-
-		float transp = 1.0f;
-
-		setCol(col
-			, 255 * diffCol[0] * m
-			, 255 * diffCol[1] * m
-			, 255 * diffCol[2] * m);
-
-		if (light_mode >= 1) {
+		blendCol(col, 1.0f
+			, 255 * diffCol[0]
+			, 255 * diffCol[1]
+			, 255 * diffCol[2]);
+		
+		//if (light_mode >= 1) {
 			/*
 			setCol(col,
 				255 * m * (min(1.0f, ((reflCol[0] * (fresneleffect)) + (refrCol[0] * (1 - fresneleffect)*transp)) * diffCol[0]))
@@ -902,12 +956,8 @@ __device__ void RaytraceTris(Texel* col
 			); 
 			*/
 
-			blendCol(col, 0.5f
-				, 255 * min(1.0f, ((reflCol[0] * (fresneleffect)) + (refrCol[0] * (1 - fresneleffect)*transp)) )
-				, 255 * min(1.0f, ((reflCol[1] * (fresneleffect)) + (refrCol[1] * (1 - fresneleffect)*transp)) )
-				, 255 * min(1.0f, ((reflCol[2] * (fresneleffect)) + (refrCol[2] * (1 - fresneleffect)*transp)) )
-			);
-		}
+
+		//}
 
 	}
 }
