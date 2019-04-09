@@ -208,6 +208,9 @@ struct Texel {
 
 };
 
+texture<uchar4, 2, cudaReadModeNormalizedFloat> cudaTex1;
+texture<uchar4, 2, cudaReadModeNormalizedFloat> cudaTex2;
+
 struct Sphere
 {
 	vec3 center;                           /// position of the sphere
@@ -257,6 +260,16 @@ __device__ float magnitude(vec3 v) {
 
 __device__ float dot(vec3 l, vec3 r) {
 	return (l[0] * r[0]) + (l[1] * r[1]) + (l[2] * r[2]);
+}
+
+
+__device__ float dotAxis(vec3 l, int axis, float dir) {
+
+	return 
+		(l[0] * ((axis ==0)? dir : 0))
+		+ (l[1] * ((axis == 1) ? dir : 0))
+		+ (l[2] * ((axis == 2) ? dir : 0));
+
 }
 
 __device__ float cross(int axis, vec3 a, vec3 b) {
@@ -314,6 +327,7 @@ struct IntersectionResult{
 	float tmin = -1.0f;
 	vec3 pos = { 0 };
 	vec3 normal = { 0 };
+	vec3 uv = { 0 };
 	vec4 col = { 0 };
 	int triIndex = -1;
 	int faceDir = 0;
@@ -583,6 +597,20 @@ __device__ void intersectTris(int* vertIdx, Vertex* verts, IntersectionResult* o
 			(verts[closestTri + 1].normal[2] * minV) +
 			(verts[closestTri + 2].normal[2] * minU);
 
+
+		outhit->uv[0] =
+			(verts[closestTri + 0].uv[0] * (1.0 - minV - minU)) +
+			(verts[closestTri + 1].uv[0] * minV) +
+			(verts[closestTri + 2].uv[0] * minU);
+		outhit->uv[1] =
+			(verts[closestTri + 0].uv[1] * (1.0 - minV - minU)) +
+			(verts[closestTri + 1].uv[1] * minV) +
+			(verts[closestTri + 2].uv[1] * minU);
+
+		//float uvmag = magnitude(outhit->uv);
+		//outhit->uv[0] = outhit->uv[0] / WIDTH;
+		//outhit->uv[1] = outhit->uv[1] / HEIGHT;
+
 		//outhit->normal[0] = -outhit->normal[0];
 		//outhit->normal[1] = -outhit->normal[1];
 		//outhit->normal[2] = -outhit->normal[2];
@@ -632,6 +660,8 @@ __device__ void intersectBVH(BVH* bvh
 	outhit->triIndex = -1;
 	outhit->faceDir = 0; 
 	outhit->tmin = -1;
+	outhit->uv[0] = 0;
+	outhit->uv[1] = 0;
 	
 	vec3 raydir = { 0 };
 	raydir[0] = ray_x;
@@ -698,6 +728,9 @@ __device__ void intersectBVH(BVH* bvh
 				, orig_x, orig_y, orig_z
 				, ray_x, ray_y, ray_z
 				, maxDist);
+
+			//Can do this when BVH are sorted (e.g. first hit is certain to be front-most
+			//if (outhit->triIndex >= 0) return;
 		}
 	}
 }
@@ -705,7 +738,8 @@ __device__ void intersectBVH(BVH* bvh
 #if SHAPE_MODE==0
 
 //template<int depth>
-__device__ void RaytraceTris(Texel* col
+__device__ void RaytraceTris(
+	Texel* col
 	, float factor
 	, BVH* bvh
 	, int numBVH
@@ -744,6 +778,31 @@ __device__ void RaytraceTris(Texel* col
 		diffCol[1] = hitlist->col[1];
 		diffCol[2] = hitlist->col[2];
 
+		//Tex2D get colors as .xyz
+		diffCol[0] = diffCol[0] * (tex2D(cudaTex1, hitlist->uv[0] , hitlist->uv[1] ).x);
+		diffCol[1] = diffCol[1] * (tex2D(cudaTex1, hitlist->uv[0] , hitlist->uv[1] ).y);
+		diffCol[2] = diffCol[2] * (tex2D(cudaTex1, hitlist->uv[0] , hitlist->uv[1] ).z);
+		
+		vec3 nnhit = { 0 };
+
+		//world-space normal
+		//nnhit[0] = hitlist->normal[0];
+		//nnhit[1] = hitlist->normal[1];
+		//nnhit[2] = hitlist->normal[2];
+
+		float normalIntensity = 2.0f;
+
+		//tangent space normal (i.e. oriented to triangle)
+		nnhit[0] = normalIntensity * (tex2D(cudaTex2, hitlist->uv[0], hitlist->uv[1]).x * 2.0 - 1.0);
+		nnhit[1] = normalIntensity * (tex2D(cudaTex2, hitlist->uv[0], hitlist->uv[1]).y * 2.0 - 1.0);
+		nnhit[2] = (tex2D(cudaTex2, hitlist->uv[0], hitlist->uv[1]).z * 2.0 - 1.0);
+
+		float nnhitmag = magnitude(nnhit);
+		nnhit[0] = nnhit[0] / nnhitmag;
+		nnhit[0] = nnhit[1] / nnhitmag;
+		nnhit[0] = nnhit[2] / nnhitmag;
+
+
 		vec3 lightPos = { 0 };
 		lightPos[0] = light_x;
 		lightPos[1] = light_y;
@@ -754,20 +813,15 @@ __device__ void RaytraceTris(Texel* col
 		toLight[1] = lightPos[1] - (hitPos[1]);
 		toLight[2] = lightPos[2] - (hitPos[2]);
 
+
+		toLight[0] = dotAxis(toLight, 0, nnhit[0]);
+		toLight[1] = dotAxis(toLight, 1, nnhit[1]);
+		toLight[2] = dotAxis(toLight, 2, nnhit[2]);
+
 		float distToLight = magnitude(toLight);
 		toLight[0] = toLight[0] / distToLight;
 		toLight[1] = toLight[1] / distToLight;
 		toLight[2] = toLight[2] / distToLight;
-
-
-		vec3 nnhit = { 0 };
-		nnhit[0] = hitlist->normal[0];
-		nnhit[1] = hitlist->normal[1];
-		nnhit[2] = hitlist->normal[2];
-		float nnhitmag = magnitude(nnhit);
-		nnhit[0] = nnhit[0] / nnhitmag;
-		nnhit[0] = nnhit[1] / nnhitmag;
-		nnhit[0] = nnhit[2] / nnhitmag;
 
 		vec3 raydir = { 0 };
 		raydir[0] = ray_x;
@@ -812,6 +866,20 @@ __device__ void RaytraceTris(Texel* col
 
 		if (shadowCaster == -1 || shadowCaster == tri) {
 			m = max(m, abs(max(dot(toLight, nnhit), dot(toLight, nnnhit))));
+			
+			vec3 halfwayDir = { 0 };
+			halfwayDir[0] = toLight[0] + raydir[0];
+			halfwayDir[1] = toLight[1] + raydir[1];
+			halfwayDir[2] = toLight[2] + raydir[2];
+			float hwdmag = magnitude(halfwayDir);
+			halfwayDir[0] /= hwdmag;
+			halfwayDir[1] /= hwdmag;
+			halfwayDir[2] /= hwdmag;
+
+			//TODO: variable shininess using pow and exponent
+			float spec = max(dot(nnhit, halfwayDir), 0.0f);
+			m = max((spec * spec * spec)*m, m);
+
 		}
 
 		/*
@@ -821,8 +889,8 @@ __device__ void RaytraceTris(Texel* col
 			, 255 * diffCol[2] * m);
 			*/
 
-		vec3 reflCol = { 0.5f, 0.5f, 0.5f };
-		vec3 refrCol = { 0.5f, 0.5f, 0.5f };
+		vec3 reflCol = { 0 };
+		vec3 refrCol = { 0 };
 
 		vec3 nraydir = { 0 };
 		nraydir[0] = -ray_x / raydirmag;
@@ -940,13 +1008,14 @@ __device__ void RaytraceTris(Texel* col
 		}
 
 		if (light_mode != 0) {
-			//if diffuse, sum to 1 to cancel blending effect
-			float reflBlend = (light_mode == 1 || light_mode == 3) ? 0.9f : 0.0f;
-			float refrBlend = (light_mode >= 2) ? 0.6f : 0.0f;
 
-			diffCol[0] = ((1.0f / (reflBlend + refrBlend)) * diffCol[0] * m) + (reflCol[0] * reflBlend*fresneleffect) + (refrCol[0] * refrBlend*(1 - fresneleffect)*transp);
-			diffCol[1] = ((1.0f / (reflBlend + refrBlend)) * diffCol[1] * m) + (reflCol[1] * reflBlend*fresneleffect) + (refrCol[1] * refrBlend*(1 - fresneleffect)*transp);
-			diffCol[2] = ((1.0f / (reflBlend + refrBlend)) * diffCol[2] * m) + (reflCol[2] * reflBlend*fresneleffect) + (refrCol[2] * refrBlend*(1 - fresneleffect)*transp);
+			//diffuse to refl/refr ratio
+			float diffuseBlend = (light_mode == 1) ? 0.4f : 0.8f;
+
+			diffCol[0] = (diffuseBlend*(diffCol[0] * m)) + ((1.0f - diffuseBlend) * ((reflCol[0] * fresneleffect) + (refrCol[0] * (1 - fresneleffect)*transp)));
+			diffCol[1] = (diffuseBlend*(diffCol[1] * m)) + ((1.0f - diffuseBlend) * ((reflCol[1] * fresneleffect) + (refrCol[1] * (1 - fresneleffect)*transp)));
+			diffCol[2] = (diffuseBlend*(diffCol[2] * m)) + ((1.0f - diffuseBlend) * ((reflCol[2] * fresneleffect) + (refrCol[2] * (1 - fresneleffect)*transp)));
+
 		}
 		else {
 			diffCol[0] = diffCol[0] * m;
@@ -1319,7 +1388,8 @@ __global__ void update_vertex_data(Vertex* verts, int numTris) {
 }
 */
 
-__global__ void get_raytraced_pixels(Texel* pixels
+__global__ void get_raytraced_pixels(
+	Texel* pixels
 	, BVH* bvh, int numBVH
 	, Vertex* verts, int numTris
 	, Sphere* spheres, int numSpheres
@@ -1435,6 +1505,7 @@ __global__ void get_raytraced_pixels(Texel* pixels
 			, &hitlist[(raw_y * (WIDTH/(squareDim))) + (raw_x)]
 			, light_mode
 			);
+
 #endif
 	}
 
@@ -1592,9 +1663,6 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
 	}
 }
 
-//TES25TH-MORROWIND
-
-
 class vulkanCudaApp {
 public:
 	void run() {
@@ -1637,13 +1705,19 @@ private:
 
 
 	bool loadFromFile = true;
+	
 	VkImage textureImage;
 	VkDeviceMemory textureImageMemory;
+
+	cudaArray *cudaTex1Array;
+	cudaArray *cudaTex2Array;
 
 	VkBuffer stagingBuffer;
 	VkDeviceMemory stagingBufferMemory;
 
 	stbi_uc* pixels;
+	stbi_uc* texture1;
+	stbi_uc* texture2;
 
 	size_t vertexBufSize = 0;
 	bool startSubmit = 0;
@@ -1851,7 +1925,7 @@ private:
 		createCommandPool();
 
 		//Added textures
-		createTextureImage();
+		createTextureImages();
 
 		createUniformBuffer();
 		createDescriptorPool();
@@ -2972,8 +3046,38 @@ private:
 			
 		
 #endif
+		//COLOR TEXTURE
+		// Copy to device memory some data located at address h_data in host memory
+		cudaChannelFormatDesc channelDesc = //cudaCreateChannelDesc(sizeof(float), sizeof(float), sizeof(float), sizeof(float), cudaChannelFormatKindFloat);
+			cudaCreateChannelDesc<uchar4>();
 
+		checkCudaErrors(cudaMallocArray(&cudaTex1Array, &channelDesc, WIDTH, HEIGHT));
+		cudaMemcpyToArray(cudaTex1Array, 0, 0, texture1, WIDTH*HEIGHT * sizeof(uchar4), cudaMemcpyHostToDevice);
 
+		// Set texture parameters
+		cudaTex1.normalized = true;
+		cudaTex1.filterMode = cudaFilterModeLinear; //= cudaFilterModePoint;  
+		cudaTex1.addressMode[0] = cudaAddressModeWrap;
+		cudaTex1.addressMode[1] = cudaAddressModeWrap;
+		cudaTex1.addressMode[2] = cudaAddressModeWrap;
+
+		// Bind the array to the texture 
+		checkCudaErrors(cudaBindTextureToArray(cudaTex1, cudaTex1Array, channelDesc));
+
+		//BUMP TEXTURE
+		checkCudaErrors(cudaMallocArray(&cudaTex2Array, &channelDesc, WIDTH, HEIGHT));
+		cudaMemcpyToArray(cudaTex2Array, 0, 0, texture2, WIDTH*HEIGHT * sizeof(uchar4), cudaMemcpyHostToDevice);
+
+		// Set texture parameters
+		cudaTex2.normalized = true;
+		cudaTex2.filterMode = cudaFilterModeLinear; //= cudaFilterModePoint;  
+		cudaTex2.addressMode[0] = cudaAddressModeWrap;
+		cudaTex2.addressMode[1] = cudaAddressModeWrap;
+		cudaTex2.addressMode[2] = cudaAddressModeWrap;
+
+		// Bind the array to the texture
+		checkCudaErrors(cudaBindTextureToArray(cudaTex2, cudaTex2Array, channelDesc));
+		
 		checkCudaErrors(cudaStreamSynchronize(streamToRun));
 	}
 
@@ -3541,7 +3645,7 @@ private:
 		vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
 	}
 
-	void createTextureImage() {
+	void createTextureImages() {
 
 
 		//VkDeviceSize imageSize = WIDTH * HEIGHT * 4 * sizeof(stbi_uc);
@@ -3569,14 +3673,28 @@ private:
 			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
 			VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT, stagingBuffer, stagingBufferMemory);
 #endif
+		//Image load 1 - texture used by cuda for objects col
+		int texWidth, texHeight, texChannels;
+		texture1 = (stbi_uc*)stbi_load("Assets/objtexture.jpg", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
 
+		if (!texture1) {
+			throw std::runtime_error("failed to load objtexture.jpg!");
+		}
+
+		//Image load 2 - texture used by cuda for objects bump
+		texture2 = (stbi_uc*)stbi_load("Assets/objtexturebump.jpg", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+
+		if (!texture2) {
+			throw std::runtime_error("failed to load objtexturebump.jpg!");
+		}
+
+		//Image load 3 - texture used by Vulkan (to blit first frame, i.e. instructions)
 		if (loadFromFile) {
-			int texWidth, texHeight, texChannels;
 
 			pixels = (stbi_uc*)stbi_load("Assets/texture.jpg", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
 
 			if (!pixels) {
-				throw std::runtime_error("failed to load texture image!");
+				throw std::runtime_error("failed to load texture.jpg!");
 			}
 			void* data;
 			vkMapMemory(device, stagingBufferMemory, 0, imageSize, 0, &data);
@@ -4054,6 +4172,8 @@ private:
 		#elif SHAPE_MODE == 0
 			checkCudaErrors(cudaFree(cudaVerts));
 		#endif
+			checkCudaErrors(cudaFree(cudaTex1));
+			checkCudaErrors(cudaFree(cudaTex2));
 		*/
 
 		free(vertData);
@@ -4062,8 +4182,11 @@ private:
 
 		vkDestroyBuffer(device, stagingBuffer, nullptr);
 		vkFreeMemory(device, stagingBufferMemory, nullptr);
-
+		
+		stbi_image_free(texture1); 
+		stbi_image_free(texture2);
 		if (loadFromFile) stbi_image_free(pixels);
+		
 		vkDestroyImage(device, textureImage, nullptr);
 		vkFreeMemory(device, textureImageMemory, nullptr);
 

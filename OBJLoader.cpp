@@ -9,6 +9,19 @@ std::vector<ObjMat> OBJLoader::theMats = std::vector<ObjMat>();
 std::vector<Vertex> OBJLoader::m_distinctVerts = std::vector<Vertex>();
 std::vector<BVH_BAKE> OBJLoader::m_BVH = std::vector<BVH_BAKE>();
 
+float dot2(vec3 l, vec3 r) {
+	return (l[0] * r[0]) + (l[1] * r[1]) + (l[2] * r[2]);
+}
+
+void cross(vec3 &out, vec3 a, vec3 b) {
+	//cx = aybz - azby
+	out[0]= a[1] * b[2] - a[2] * b[1];
+	//cx = azbx - axbz
+	out[1] = a[2] * b[0] - a[0] * b[2];
+	//cx = axby - aybx
+	out[2] = a[0] * b[1] - a[1] * b[0];
+}
+
 int OBJLoader::loadRawVertexList(const char * fileName, Vertex** vertData) {
 
 	m_distinctVerts.clear();
@@ -44,15 +57,14 @@ int OBJLoader::loadRawVertexList(const char * fileName, Vertex** vertData) {
 			v1.normal[1] = m_vNormals[normAIdx].pos[1];
 			v1.normal[2] = m_vNormals[normAIdx].pos[2];
 		}
-		
-		if (uvAIdx < m_vTexCoords.size()) {
-			v1.color[0] = (m_vTexCoords[uvAIdx].pos[0]);
-			v1.color[1] = (m_vTexCoords[uvAIdx].pos[1]);
-			//v1.color[0] = 0.8f;
-			//v1.color[1] = 0.8f;
-			v1.color[2] = 0.8f;
-			//vec3_norm(v1.color, v1.color);
 
+		v1.color[0] = 0.5f;
+		v1.color[1] = 0.5f;
+		v1.color[2] = 0.5f;
+
+		if (uvAIdx < m_vTexCoords.size()) {
+			//v1.color[0] = 0.1f * (m_vTexCoords[uvAIdx].pos[0]);
+			//v1.color[1] = 0.1f * (m_vTexCoords[uvAIdx].pos[1]);
 
 			v1.uv[0] = (m_vTexCoords[uvAIdx].pos[0]);
 			v1.uv[1] = (m_vTexCoords[uvAIdx].pos[1]);
@@ -68,17 +80,13 @@ int OBJLoader::loadRawVertexList(const char * fileName, Vertex** vertData) {
 			v2.normal[1] = m_vNormals[normBIdx].pos[1];
 			v2.normal[2] = m_vNormals[normBIdx].pos[2];
 		}
-		v2.color[0] = 0.0f;
-		v2.color[1] = 1.0f;
-		v2.color[2] = 0.0f;
+		v2.color[0] = 0.5f;
+		v2.color[1] = 0.5f;
+		v2.color[2]  = 0.5f;
 
 		if (uvBIdx < m_vTexCoords.size()) {
-			v2.color[0] = (m_vTexCoords[uvBIdx].pos[0]);
-			v2.color[1] = (m_vTexCoords[uvBIdx].pos[1]);
-			//v2.color[0] = 0.8f;
-			//v2.color[1] = 0.8f;
-			v2.color[2] = 0.8f;
-			//vec3_norm(v2.color, v2.color);
+			//v2.color[0] = 0.1f * (m_vTexCoords[uvBIdx].pos[0]);
+			//v2.color[1] = 0.1f * (m_vTexCoords[uvBIdx].pos[1]);
 
 
 			v2.uv[0] = (m_vTexCoords[uvBIdx].pos[0]);
@@ -95,22 +103,89 @@ int OBJLoader::loadRawVertexList(const char * fileName, Vertex** vertData) {
 			v3.normal[1] = m_vNormals[normCIdx].pos[1];
 			v3.normal[2] = m_vNormals[normCIdx].pos[2];
 		}
-		v3.color[0] = 0.0f;
-		v3.color[1] = 0.0f;
-		v3.color[2] = 1.0f;
+		v3.color[0] = 0.5f;
+		v3.color[1] = 0.5f;
+		v3.color[2] = 0.5f;
 
 		if (uvCIdx < m_vTexCoords.size()) {
-			v3.color[0] = (m_vTexCoords[uvCIdx].pos[0]);
-			v3.color[1] = (m_vTexCoords[uvCIdx].pos[1]);
-			//v3.color[0] = 0.8f;
-			//v3.color[1] = 0.8f;
-			v3.color[2] = 0.8f;
-			//vec3_norm(v3.color, v3.color);
-
+			//v3.color[0] = 0.1f * (m_vTexCoords[uvCIdx].pos[0]);
+			//v3.color[1] = 0.1f * (m_vTexCoords[uvCIdx].pos[1]);
 
 			v3.uv[0] = (m_vTexCoords[uvCIdx].pos[0]);
 			v3.uv[1] = (m_vTexCoords[uvCIdx].pos[1]);
 		}
+
+		//Compute tangent and bitangent space
+		// Edges of the triangle : position delta
+		vec3 deltaPos1 = { 0 };
+		deltaPos1[0] = v2.pos[0] - v1.pos[0];
+		deltaPos1[1] = v2.pos[1] - v1.pos[1];
+		deltaPos1[2] = v2.pos[2] - v1.pos[2];
+		vec3 deltaPos2 = { 0 };
+		deltaPos2[0] = v3.pos[0] - v1.pos[0];
+		deltaPos2[1] = v3.pos[1] - v1.pos[1];
+		deltaPos2[2] = v3.pos[2] - v1.pos[2];
+
+		// UV delta
+		vec3 deltaUV1 = { 0 };
+		deltaUV1[0] = v2.uv[0] - v1.uv[0];
+		deltaUV1[0] = v2.uv[1] - v1.uv[1];
+		vec3 deltaUV2 = { 0 };
+		deltaUV2[0] = v3.uv[0] - v1.uv[0];
+		deltaUV2[0] = v3.uv[1] - v1.uv[1];
+
+		float r = 1.0f / (deltaUV1[0] * deltaUV2[1] - deltaUV1[1] * deltaUV2[0]);
+		vec3 tangent = { 0 };
+		tangent[0] = (deltaPos1[0] * deltaUV2[1] - deltaPos2[0] * deltaUV1[1])*r;
+		tangent[1] = (deltaPos1[1] * deltaUV2[1] - deltaPos2[1] * deltaUV1[1])*r;
+		tangent[2] = (deltaPos1[2] * deltaUV2[1] - deltaPos2[2] * deltaUV1[1])*r;
+		vec3 bitangent = { 0 };
+		bitangent[0] = (deltaPos2[0] * deltaUV1[0] - deltaPos1[0] * deltaUV2[0])*r;
+		bitangent[1] = (deltaPos2[1] * deltaUV1[0] - deltaPos1[1] * deltaUV2[0])*r;
+		bitangent[2] = (deltaPos2[2] * deltaUV1[0] - deltaPos1[2] * deltaUV2[0])*r;
+
+		v1.tangent[0] = tangent[0];
+		v1.tangent[1] = tangent[1];
+		v1.tangent[2] = tangent[2];
+		v1.bitangent[0] = bitangent[0];
+		v1.bitangent[1] = bitangent[1];
+		v1.bitangent[2] = bitangent[2];
+
+		// Gram-Schmidt orthogonalize
+		//ensure axis are orthogonal...
+		float dotnt = dot2(v1.normal, tangent);
+		tangent[0] = tangent[0] - v1.normal[0] * dotnt;
+		tangent[1] = tangent[1] - v1.normal[1] * dotnt;
+		tangent[2] = tangent[2] - v1.normal[2] * dotnt;
+		float tanmag = sqrtf(tangent[0] * tangent[0] + tangent[1] * tangent[1] + tangent[2] * tangent[2]);
+		tangent[0] /= tanmag; 
+		tangent[1] /= tanmag;
+		tangent[2] /= tanmag;
+
+		//handedness
+		vec3 crossnt = { 0 };
+		cross(crossnt, v1.normal, tangent);
+		if (dot2(crossnt, bitangent) < 0.0f) {
+			tangent[0] = tangent[0] * -1.0f;
+			tangent[1] = tangent[1] * -1.0f;
+			tangent[2] = tangent[2] * -1.0f;
+		}
+
+		/*
+		v2.tangent[0] = tangent[0];
+		v2.tangent[1] = tangent[1];
+		v2.tangent[2] = tangent[2];
+		v2.bitangent[0] = bitangent[0];
+		v2.bitangent[1] = bitangent[1];
+		v2.bitangent[2] = bitangent[2];
+
+		v3.tangent[0] = tangent[0];
+		v3.tangent[1] = tangent[1];
+		v3.tangent[2] = tangent[2];
+		v3.bitangent[0] = bitangent[0];
+		v3.bitangent[1] = bitangent[1];
+		v3.bitangent[2] = bitangent[2];
+		*/
 
 		m_distinctVerts.push_back(v1);
 		m_distinctVerts.push_back(v2);
