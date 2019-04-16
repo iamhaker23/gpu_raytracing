@@ -68,8 +68,8 @@
 
 #include "linmath.h"
 
-#define WIDTH 1024
-#define HEIGHT 1024
+#define WIDTH 512
+#define HEIGHT 512
 #define SHAPE_MODE 0
 #define BVH_DEBUG_VISUALISATION 0
 #define CULLING 1
@@ -790,7 +790,7 @@ __device__ void RaytraceTris(
 		//nnhit[1] = hitlist->normal[1];
 		//nnhit[2] = hitlist->normal[2];
 
-		float normalIntensity = 2.0f;
+		float normalIntensity = 0.5f;
 
 		//tangent space normal (i.e. oriented to triangle)
 		nnhit[0] = normalIntensity * (tex2D(cudaTex2, hitlist->uv[0], hitlist->uv[1]).x * 2.0 - 1.0);
@@ -798,10 +798,9 @@ __device__ void RaytraceTris(
 		nnhit[2] = (tex2D(cudaTex2, hitlist->uv[0], hitlist->uv[1]).z * 2.0 - 1.0);
 
 		float nnhitmag = magnitude(nnhit);
-		nnhit[0] = nnhit[0] / nnhitmag;
-		nnhit[0] = nnhit[1] / nnhitmag;
-		nnhit[0] = nnhit[2] / nnhitmag;
-
+		nnhit[0] = nnhit[0] / nnhitmag * ((inside) ? 1 : -1);
+		nnhit[0] = nnhit[1] / nnhitmag * ((inside) ? 1 : -1);
+		nnhit[0] = nnhit[2] / nnhitmag * ((inside) ? 1 : -1);
 
 		vec3 lightPos = { 0 };
 		lightPos[0] = light_x;
@@ -812,13 +811,15 @@ __device__ void RaytraceTris(
 		toLight[0] = lightPos[0] - (hitPos[0]);
 		toLight[1] = lightPos[1] - (hitPos[1]);
 		toLight[2] = lightPos[2] - (hitPos[2]);
-
+		float distToLight = magnitude(toLight);
+		toLight[0] = toLight[0] / distToLight;
+		toLight[1] = toLight[1] / distToLight;
+		toLight[2] = toLight[2] / distToLight;
 
 		toLight[0] = dotAxis(toLight, 0, nnhit[0]);
 		toLight[1] = dotAxis(toLight, 1, nnhit[1]);
 		toLight[2] = dotAxis(toLight, 2, nnhit[2]);
-
-		float distToLight = magnitude(toLight);
+		distToLight = magnitude(toLight);
 		toLight[0] = toLight[0] / distToLight;
 		toLight[1] = toLight[1] / distToLight;
 		toLight[2] = toLight[2] / distToLight;
@@ -834,14 +835,14 @@ __device__ void RaytraceTris(
 
 		//inside = (dot(raydir, nnhit) > 0) ? 1 : 0;
 
-		nnhit[0] = hitlist->normal[0] * ((inside) ? 1 : -1);
-		nnhit[1] = hitlist->normal[1] * ((inside) ? 1 : -1);
-		nnhit[2] = hitlist->normal[2] * ((inside) ? 1 : -1);
+		//nnhit[0] = hitlist->normal[0] * ((inside) ? 1 : -1);
+		//nnhit[1] = hitlist->normal[1] * ((inside) ? 1 : -1);
+		//nnhit[2] = hitlist->normal[2] * ((inside) ? 1 : -1);
 
 		vec3 nnnhit = { 0 };
-		nnnhit[0] = -nnhit[0] * ((inside) ? 1 : -1);
-		nnnhit[1] = -nnhit[1] * ((inside) ? 1 : -1);
-		nnnhit[2] = -nnhit[2] * ((inside) ? 1 : -1);
+		nnnhit[0] = -nnhit[0];
+		nnnhit[1] = -nnhit[1];
+		nnnhit[2] = -nnhit[2];
 
 		/*
 		intersectTris(2, verts, hitlist, factor, numTris
@@ -862,23 +863,26 @@ __device__ void RaytraceTris(
 
 		int shadowCaster = hitlist->triIndex;
 
-		float m = 0.05f;
+		float m = 0.1f;
 
 		if (shadowCaster == -1 || shadowCaster == tri) {
 			m = max(m, abs(max(dot(toLight, nnhit), dot(toLight, nnnhit))));
 			
-			vec3 halfwayDir = { 0 };
-			halfwayDir[0] = toLight[0] + raydir[0];
-			halfwayDir[1] = toLight[1] + raydir[1];
-			halfwayDir[2] = toLight[2] + raydir[2];
-			float hwdmag = magnitude(halfwayDir);
-			halfwayDir[0] /= hwdmag;
-			halfwayDir[1] /= hwdmag;
-			halfwayDir[2] /= hwdmag;
+			if (m > 0.1f) {
+				//blinn-phong specular reflection
+				vec3 halfwayDir = { 0 };
+				halfwayDir[0] = toLight[0] + raydir[0];
+				halfwayDir[1] = toLight[1] + raydir[1];
+				halfwayDir[2] = toLight[2] + raydir[2];
+				float hwdmag = magnitude(halfwayDir);
+				halfwayDir[0] /= hwdmag;
+				halfwayDir[1] /= hwdmag;
+				halfwayDir[2] /= hwdmag;
 
-			//TODO: variable shininess using pow and exponent
-			float spec = max(dot(nnhit, halfwayDir), 0.0f);
-			m = max((spec * spec * spec)*m, m);
+				//TODO: variable shininess using pow and exponent
+				float spec = abs(dot(nnhit, halfwayDir));// , 0.0f);
+				m += spec * spec * spec;
+			}
 
 		}
 
@@ -898,7 +902,7 @@ __device__ void RaytraceTris(
 		nraydir[2] = -ray_z / raydirmag;
 
 		float facingratio = dot(nraydir, nnhit);
-		float fresneleffect = (light_mode == 0) ? 1.0f : min(0.1f, ((0.9f * (1 - facingratio) * (1 - facingratio) * (1 - facingratio)) + 0.1f));
+		float fresneleffect = (light_mode == 0) ? 1.0f : max(0.1f, ((0.9f * (1 - facingratio) * (1 - facingratio) * (1 - facingratio)) + 0.1f));
 
 		float cosi = dot(raydir, nnnhit);
 
