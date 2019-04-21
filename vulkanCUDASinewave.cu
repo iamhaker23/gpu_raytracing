@@ -326,7 +326,11 @@ struct IntersectionResult{
 	*/
 	float tmin = -1.0f;
 	vec3 pos = { 0 };
+	
 	vec3 normal = { 0 };
+	//vec3 tangent;
+	//vec3 bitangent;
+
 	vec3 uv = { 0 };
 	vec4 col = { 0 };
 	int triIndex = -1;
@@ -617,6 +621,18 @@ __device__ void intersectTris(int* vertIdx, Vertex* verts, IntersectionResult* o
 		outhit->triIndex = closestTri;
 		outhit->faceDir = faceDir;
 		outhit->tmin = minT;
+
+		//tangent axis is stored in first vertex only
+		//outhit->tangent[0] = verts[closestTri + 0].tangent[0];
+		//outhit->tangent[1] = verts[closestTri + 0].tangent[1];
+		//outhit->tangent[2] = verts[closestTri + 0].tangent[2];
+
+		//bitangent axis is stored in first vertex only
+		//outhit->bitangent[0] = verts[closestTri + 0].bitangent[0];
+		//outhit->bitangent[1] = verts[closestTri + 0].bitangent[1];
+		//outhit->bitangent[2] = verts[closestTri + 0].bitangent[2];
+
+
 	}
 	/*
 		outhit->pos[0] =
@@ -790,9 +806,9 @@ __device__ void RaytraceTris(
 		nnhit[2] = hitlist->normal[2];
 
 		float nnhitmag = magnitude(nnhit);
-		nnhit[0] = nnhit[0] / nnhitmag * ((inside) ? -1 : 1);
-		nnhit[1] = nnhit[1] / nnhitmag * ((inside) ? -1 : 1);
-		nnhit[2] = nnhit[2] / nnhitmag * ((inside) ? -1 : 1);
+		nnhit[0] = nnhit[0] / nnhitmag * ((inside) ? 1 : -1);
+		nnhit[1] = nnhit[1] / nnhitmag * ((inside) ? 1 : -1);
+		nnhit[2] = nnhit[2] / nnhitmag * ((inside) ? 1 : -1);
 
 		vec3 lightPos = { 0 };
 		lightPos[0] = light_x;
@@ -809,15 +825,28 @@ __device__ void RaytraceTris(
 		toLight[2] = toLight[2] / distToLight;
 
 		//tangent space normal (i.e. oriented to triangle)
-		float normalIntensity = 2.0f;
+		float normalIntensity = 0.1f;
 		vec3 nnhitTang = { 0 };
 		nnhitTang[0] = normalIntensity * (tex2D(cudaTex2, hitlist->uv[0], hitlist->uv[1]).x * 2.0 - 1.0);
 		nnhitTang[1] = normalIntensity * (tex2D(cudaTex2, hitlist->uv[0], hitlist->uv[1]).y * 2.0 - 1.0);
-		nnhitTang[2] = -(tex2D(cudaTex2, hitlist->uv[0], hitlist->uv[1]).z * 2.0 - 1.0);
+		nnhitTang[2] = -normalIntensity * (tex2D(cudaTex2, hitlist->uv[0], hitlist->uv[1]).z * 2.0 - 1.0);
+		//Convert tangent-space bump map to world-space
+		nnhitTang[0] = dotAxis(nnhitTang, 0, 1);
+		nnhitTang[1] = dotAxis(nnhitTang, 1, 1);
+		nnhitTang[2] = dotAxis(nnhitTang, 2, 1);
 		float nh = magnitude(nnhitTang);
 		nnhitTang[0] /= nh;
 		nnhitTang[1] /= nh;
 		nnhitTang[2] /= nh;
+		//add bump normal to geometry normal
+		nnhit[0] += nnhitTang[0];
+		nnhit[1] += nnhitTang[1];
+		nnhit[2] += nnhitTang[2];
+		float nh2 = magnitude(nnhit);
+		nnhit[0] /= nh2;
+		nnhit[1] /= nh2;
+		nnhit[2] /= nh2;
+
 		//toLight in tri tangent-space
 		vec3 toLightTang = { 0 };
 		toLightTang[0] = toLight[0];
@@ -867,8 +896,8 @@ __device__ void RaytraceTris(
 			
 			m = max(m,
 				 max(
-					(dot(toLightTang, nnnhitTang))
-					, (dot(toLightTang, nnhitTang))
+					(dot(toLight,nnnhit))
+					, (dot(toLight, nnhit))
 				)
 			);
 			
@@ -901,7 +930,7 @@ __device__ void RaytraceTris(
 			);
 			
 			//TODO: spec has weird pattern
-			//m = (0.5f*(spec * spec * spec)*m)+(0.5f*m);
+			m = (0.5f*(spec * spec * spec)*m)+(0.5f*m);
 			
 			mr = m;
 		}
@@ -926,7 +955,7 @@ __device__ void RaytraceTris(
 		float fresneleffect = (light_mode == 0) ? 1.0f : 0.5f;// ((0.9f * (1 - facingratio) * (1 - facingratio) * (1 - facingratio)) + 0.1f);
 		fresneleffect = min(fresneleffect, 1.0f);
 
-		float cosi = dot(raydir, nnnhit);
+		float cosi = dot(raydir, nnhit);
 
 		float transp = 1.0f;
 		//if (light_mode >= 2) {
@@ -942,19 +971,19 @@ __device__ void RaytraceTris(
 
 			//ACTUAL REFRACTION
 			float k = max(0.0f, 1 - eta * eta * (1 - cosi * cosi));
-			refrdir[0] = (raydir[0] * eta) + (nnhit[0] * ((eta * cosi ) - (k)));
-			refrdir[1] = (raydir[1] * eta) + (nnhit[1] * ((eta * cosi ) - (k)));
-			refrdir[2] = (raydir[2] * eta) + (nnhit[2] * ((eta * cosi ) - (k)));
+			refrdir[0] = (raydir[0] * eta) + (nnnhit[0] * ((eta * cosi ) - (k)));
+			refrdir[1] = (raydir[1] * eta) + (nnnhit[1] * ((eta * cosi ) - (k)));
+			refrdir[2] = (raydir[2] * eta) + (nnnhit[2] * ((eta * cosi ) - (k)));
 			//This does straight-through transparency
 			//refrdir[0] = (raydir[0] );
 			//refrdir[1] = (raydir[1] );
 			//refrdir[2] = (raydir[2] );
 
 			//normalise (and invert y)
-			//float refrMag = magnitude(refrdir);
-			//refrdir[0] = refrdir[0] / refrMag;
-			//refrdir[1] = refrdir[1] / refrMag;
-			//refrdir[2] = refrdir[2] / refrMag;
+			float refrMag = magnitude(refrdir);
+			refrdir[0] = refrdir[0] / refrMag;
+			refrdir[1] = refrdir[1] / refrMag;
+			refrdir[2] = refrdir[2] / refrMag;
 
 			/*
 			intersectTris(2, verts, hitlist, factor, numTris
