@@ -798,8 +798,8 @@ __device__ void RaytraceTris(
 		diffCol[1] = diffCol[1] * (tex2D(cudaTex1, hitlist->uv[0] , hitlist->uv[1] ).y);
 		diffCol[2] = diffCol[2] * (tex2D(cudaTex1, hitlist->uv[0] , hitlist->uv[1] ).z);
 		
-		//float normalIntensity = 2.0f;
 
+		//float normalIntensity = 2.0f;
 		vec3 nnhit = { 0 };
 		nnhit[0] = hitlist->normal[0];
 		nnhit[1] = hitlist->normal[1];
@@ -873,7 +873,7 @@ __device__ void RaytraceTris(
 		nnnhit[0] = -nnhit[0];
 		nnnhit[1] = -nnhit[1];
 		nnnhit[2] = -nnhit[2];
-		
+
 		intersectBVH(bvh, numBVH, verts, hitlist, factor, numTris
 			, hitPos[0] + nnhit[0] * 1e-2
 			, hitPos[1] + nnhit[1] * 1e-2
@@ -952,7 +952,7 @@ __device__ void RaytraceTris(
 
 		float facingratio = dot(nraydir, nnhit);
 
-		float fresneleffect = (light_mode == 0) ? 1.0f : 0.5f;// ((0.9f * (1 - facingratio) * (1 - facingratio) * (1 - facingratio)) + 0.1f);
+		float fresneleffect = (light_mode == 0) ? 1.0f : 0.5f;// max(0.1f, ((0.9f * (1 - facingratio) * (1 - facingratio) * (1 - facingratio)) + 0.1f));
 		fresneleffect = min(fresneleffect, 1.0f);
 
 		float cosi = dot(raydir, nnhit);
@@ -2661,7 +2661,7 @@ private:
 		VkSubpassDescription subpass = {};
 		subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
 
-		//pColorAttachments lists which of the render pass’s attachments will be used as color attachments 
+		//pColorAttachments lists which of the render passÂ’s attachments will be used as color attachments 
 		//in the subpass, and what layout each attachment will be in during the subpass. 
 		//Each element of the array corresponds to a fragment shader output location, 
 		//i.e. if the shader declared an output variable layout(location=X) then it uses the 
