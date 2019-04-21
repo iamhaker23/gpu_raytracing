@@ -377,6 +377,7 @@ std::string execution_path;
 
 ////START RAYTRACING
 
+
 const int MAX_RAY_DEPTH = 3;
 //const int MAX_RAY_DEPTH = 4;
 
@@ -515,9 +516,7 @@ __device__ void intersectTris(int* vertIdx, Vertex* verts, IntersectionResult* o
 #endif
 		//nohit
 		if (A < Epsilon && A > -Epsilon) continue;
-
-
-
+		
 		//s=rayOrigin-V1
 		//U=s.dot(h)/A
 		//IF U < 0.0 || U > 1.0 (no hit)
@@ -783,29 +782,17 @@ __device__ void RaytraceTris(
 		diffCol[1] = diffCol[1] * (tex2D(cudaTex1, hitlist->uv[0] , hitlist->uv[1] ).y);
 		diffCol[2] = diffCol[2] * (tex2D(cudaTex1, hitlist->uv[0] , hitlist->uv[1] ).z);
 		
-		vec3 nnhit2 = { 0 };
-
-		//world-space normal
-		nnhit2[0] = hitlist->normal[0];
-		nnhit2[1] = hitlist->normal[1];
-		nnhit2[2] = hitlist->normal[2];
-
-		float normalIntensity = 2.0f;
+		//float normalIntensity = 2.0f;
 
 		vec3 nnhit = { 0 };
-		//tangent space normal (i.e. oriented to triangle)
-		//nnhit[0] = normalIntensity * (tex2D(cudaTex2, hitlist->uv[0], hitlist->uv[1]).x * 2.0 - 1.0);
-		//nnhit[1] = normalIntensity * (tex2D(cudaTex2, hitlist->uv[0], hitlist->uv[1]).y * 2.0 - 1.0);
-		//nnhit[2] = (tex2D(cudaTex2, hitlist->uv[0], hitlist->uv[1]).z * 2.0 - 1.0);
-		nnhit[0] = nnhit2[0];
-		nnhit[1] = nnhit2[1];
-		nnhit[2] = nnhit2[2];
+		nnhit[0] = hitlist->normal[0];
+		nnhit[1] = hitlist->normal[1];
+		nnhit[2] = hitlist->normal[2];
 
 		float nnhitmag = magnitude(nnhit);
-		nnhit[0] = nnhit[0] / nnhitmag;
-		nnhit[0] = nnhit[1] / nnhitmag;
-		nnhit[0] = nnhit[2] / nnhitmag;
-
+		nnhit[0] = nnhit[0] / nnhitmag * ((inside) ? -1 : 1);
+		nnhit[1] = nnhit[1] / nnhitmag * ((inside) ? -1 : 1);
+		nnhit[2] = nnhit[2] / nnhitmag * ((inside) ? -1 : 1);
 
 		vec3 lightPos = { 0 };
 		lightPos[0] = light_x;
@@ -816,16 +803,33 @@ __device__ void RaytraceTris(
 		toLight[0] = lightPos[0] - (hitPos[0]);
 		toLight[1] = lightPos[1] - (hitPos[1]);
 		toLight[2] = lightPos[2] - (hitPos[2]);
-
-
-		//toLight[0] = dotAxis(toLight, 0, nnhit2[0]);
-		//toLight[1] = dotAxis(toLight, 1, nnhit2[1]);
-		//toLight[2] = dotAxis(toLight, 2, nnhit2[2]);
-
 		float distToLight = magnitude(toLight);
 		toLight[0] = toLight[0] / distToLight;
 		toLight[1] = toLight[1] / distToLight;
 		toLight[2] = toLight[2] / distToLight;
+
+		//tangent space normal (i.e. oriented to triangle)
+		float normalIntensity = 2.0f;
+		vec3 nnhitTang = { 0 };
+		nnhitTang[0] = normalIntensity * (tex2D(cudaTex2, hitlist->uv[0], hitlist->uv[1]).x * 2.0 - 1.0);
+		nnhitTang[1] = normalIntensity * (tex2D(cudaTex2, hitlist->uv[0], hitlist->uv[1]).y * 2.0 - 1.0);
+		nnhitTang[2] = -(tex2D(cudaTex2, hitlist->uv[0], hitlist->uv[1]).z * 2.0 - 1.0);
+		float nh = magnitude(nnhitTang);
+		nnhitTang[0] /= nh;
+		nnhitTang[1] /= nh;
+		nnhitTang[2] /= nh;
+		//toLight in tri tangent-space
+		vec3 toLightTang = { 0 };
+		toLightTang[0] = toLight[0];
+		toLightTang[1] = toLight[1];
+		toLightTang[2] = toLight[2];
+		toLightTang[0] = dotAxis(toLightTang, 0, nnhit[0]);
+		toLightTang[1] = dotAxis(toLightTang, 1, nnhit[1]);
+		toLightTang[2] = dotAxis(toLightTang, 2, nnhit[2]);
+		float distToLightTang = magnitude(toLightTang);
+		toLightTang[0] = toLightTang[0] / distToLightTang;
+		toLightTang[1] = toLightTang[1] / distToLightTang;
+		toLightTang[2] = toLightTang[2] / distToLightTang;
 
 		vec3 raydir = { 0 };
 		raydir[0] = ray_x;
@@ -836,26 +840,11 @@ __device__ void RaytraceTris(
 		raydir[1] = ray_y / raydirmag;
 		raydir[2] = ray_z / raydirmag;
 
-		//inside = (dot(raydir, nnhit) > 0) ? 1 : 0;
-
-		//nnhit[0] = hitlist->normal[0] * ((inside) ? 1 : -1);
-		//nnhit[1] = hitlist->normal[1] * ((inside) ? 1 : -1);
-		//nnhit[2] = hitlist->normal[2] * ((inside) ? 1 : -1);
-
 		vec3 nnnhit = { 0 };
-		nnnhit[0] = -nnhit2[0] * ((inside) ? 1 : -1);
-		nnnhit[1] = -nnhit2[1] * ((inside) ? 1 : -1);
-		nnnhit[2] = -nnhit2[2] * ((inside) ? 1 : -1);
-
-		/*
-		intersectTris(2, verts, hitlist, factor, numTris
-			, hitPos[0] + hitlist->normal[0] * 1e-2
-			, hitPos[1] + hitlist->normal[1] * 1e-2
-			, hitPos[2] + hitlist->normal[2] * 1e-2
-			, toLight[0], toLight[1], toLight[2]
-			, distToLight);
-			*/
-
+		nnnhit[0] = -nnhit[0];
+		nnnhit[1] = -nnhit[1];
+		nnnhit[2] = -nnhit[2];
+		
 		intersectBVH(bvh, numBVH, verts, hitlist, factor, numTris
 			, hitPos[0] + nnhit[0] * 1e-2
 			, hitPos[1] + nnhit[1] * 1e-2
@@ -870,13 +859,32 @@ __device__ void RaytraceTris(
 
 		// no shadow caster, do shading
 		if (shadowCaster == -1 || shadowCaster == tri) {
-			m = max(m
-				, max(
-					abs(dot(toLight, nnhit))
-					, abs(dot(toLight, nnnhit))
+
+			vec3 nnnhitTang = { 0 };
+			nnnhitTang[0] = -nnhitTang[0];
+			nnnhitTang[1] = -nnhitTang[1];
+			nnnhitTang[2] = -nnhitTang[2];
+			
+			m = max(m,
+				 max(
+					(dot(toLightTang, nnnhitTang))
+					, (dot(toLightTang, nnhitTang))
 				)
 			);
 			
+			vec3 raydirTang = { 0 };
+			raydirTang[0] = raydir[0];
+			raydirTang[1] = raydir[1];
+			raydirTang[2] = raydir[2];
+			raydirTang[0] = dotAxis(raydirTang, 0, nnhit[0]);
+			raydirTang[1] = dotAxis(raydirTang, 1, nnhit[1]);
+			raydirTang[2] = dotAxis(raydirTang, 2, nnhit[2]);
+			float drdt = magnitude(raydirTang);
+			raydirTang[0] = raydirTang[0] / drdt;
+			raydirTang[1] = raydirTang[1] / drdt;
+			raydirTang[2] = raydirTang[2] / drdt;
+			
+
 			vec3 halfwayDir = { 0 };
 			halfwayDir[0] = toLight[0] + raydir[0];
 			halfwayDir[1] = toLight[1] + raydir[1];
@@ -914,14 +922,16 @@ __device__ void RaytraceTris(
 		nraydir[2] = -ray_z / raydirmag;
 
 		float facingratio = dot(nraydir, nnhit);
-		float fresneleffect = (light_mode == 0) ? 1.0f : min(0.1f, ((0.9f * (1 - facingratio) * (1 - facingratio) * (1 - facingratio)) + 0.1f));
+
+		float fresneleffect = (light_mode == 0) ? 1.0f : 0.5f;// ((0.9f * (1 - facingratio) * (1 - facingratio) * (1 - facingratio)) + 0.1f);
+		fresneleffect = min(fresneleffect, 1.0f);
 
 		float cosi = dot(raydir, nnnhit);
 
 		float transp = 1.0f;
 		//if (light_mode >= 2) {
 
-			float eta = (inside) ? 1.03f : 1.0f / 1.03f;
+			float eta = (inside) ? 1.01f : 1.0f / 1.01f;
 
 			vec3 refrdir = { 0 };
 
@@ -932,18 +942,13 @@ __device__ void RaytraceTris(
 
 			//ACTUAL REFRACTION
 			float k = max(0.0f, 1 - eta * eta * (1 - cosi * cosi));
-			refrdir[0] = (raydir[0] * eta) + (nnhit2[0] * ((eta * cosi * cosi) - sqrtf(k)));
-			refrdir[1] = (raydir[1] * eta) + (nnhit2[1] * ((eta * cosi * cosi) - sqrtf(k)));
-			refrdir[2] = (raydir[2] * eta) + (nnhit2[2] * ((eta * cosi * cosi) - sqrtf(k)));
+			refrdir[0] = (raydir[0] * eta) + (nnhit[0] * ((eta * cosi ) - (k)));
+			refrdir[1] = (raydir[1] * eta) + (nnhit[1] * ((eta * cosi ) - (k)));
+			refrdir[2] = (raydir[2] * eta) + (nnhit[2] * ((eta * cosi ) - (k)));
 			//This does straight-through transparency
 			//refrdir[0] = (raydir[0] );
 			//refrdir[1] = (raydir[1] );
 			//refrdir[2] = (raydir[2] );
-			
-
-			//refrdir[0] = (eta * raydir[0]);// +((eta * (facingratio - k)) * ((inside) ? nnnhit[0] : nnhit[0]));
-			//refrdir[1] = (eta * raydir[1]);// +((eta * (facingratio - k)) * ((inside) ? nnnhit[1] : nnhit[1]));
-			//refrdir[2] = (eta * raydir[2]);// +((eta * (facingratio - k)) * ((inside) ? nnnhit[2] : nnhit[2]));
 
 			//normalise (and invert y)
 			//float refrMag = magnitude(refrdir);
@@ -1007,9 +1012,9 @@ __device__ void RaytraceTris(
 
 			/*OLD REFL
 			intersectBVH(bvh, numBVH, verts, hitlist, factor, numTris
-				, hitPos[0] + nnhit2[0] * 1e-2
-				, hitPos[1] + nnhit2[1] * 1e-2
-				, hitPos[2] + nnhit2[2] * 1e-2
+				, hitPos[0] + nnhit[0] * 1e-2
+				, hitPos[1] + nnhit[1] * 1e-2
+				, hitPos[2] + nnhit[2] * 1e-2
 				, refldir[0], refldir[1], refldir[2]
 				, -1.0f);
 
@@ -1028,7 +1033,7 @@ __device__ void RaytraceTris(
 		//}
 
 		//diffuse to refl/refr ratio
-		float diffuseBlend = (light_mode == 1) ? 0.8f : 0.8f;
+		float diffuseBlend = (depth+1 == MAX_RAY_DEPTH) ? 1.0f : 0.8f;
 		
 
 		diffCol[0] = diffCol[0] * mr;
@@ -1061,20 +1066,21 @@ __device__ void RaytraceTris(
 				, verts
 				, numTris
 				, refldir[0], refldir[1], refldir[2]
-				, hitPos[0] + nnhit2[0] * 1e-2, hitPos[1] + nnhit2[1] * 1e-2, hitPos[2] + nnhit2[2] * 1e-2
+				, hitPos[0] + nnhit[0] * 1e-2, hitPos[1] + nnhit[1] * 1e-2, hitPos[2] + nnhit[2] * 1e-2
 				, light_x, light_y, light_z
 				, hitlist
 				, light_mode);
 			//raytrace refr
 			//factor = (1.0f - diffuseBlend) * (1 - fresneleffect) * transp
-			if (light_mode >= 2) RaytraceTris<depth + 1>(col
+			if (light_mode >= 2) RaytraceTris<depth+1>(col
 				, (1.0f - diffuseBlend) * (1 - fresneleffect) * transp
+				//, 1.0f
 				, bvh
 				, numBVH
 				, verts
 				, numTris
 				, refrdir[0], refrdir[1], refrdir[2]
-				, hitPos[0] + nnhit2[0] * 1e-2, hitPos[1] + nnhit2[1] * 1e-2, hitPos[2] + nnhit2[2] * 1e-2
+				, hitPos[0] + nnhit[0] * 1e-2, hitPos[1] + nnhit[1] * 1e-2, hitPos[2] + nnhit[2] * 1e-2
 				, light_x, light_y, light_z
 				, hitlist
 				, light_mode);

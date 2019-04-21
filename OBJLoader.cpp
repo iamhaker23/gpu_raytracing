@@ -320,82 +320,54 @@ int OBJLoader::countBVHNeeded(Vertex* vertData, int numVerts, BVH** bvhData) {
 	//fill bvh vert lists
 	for (int i = 0; i < m_BVH.size(); i++) {
 
+		currentRedirect = -1;
 		expanded = 0.0f;
 
 		for (int tri = 0; tri < numVerts; tri += 3) {
 
 			//std::cout << "TESTING " << tri << "-> " << m_BVH[i].min[0] << " < " << vertData[tri + 0].pos[0] << " < " << m_BVH[i].max[0] << std::endl;
 
-			bool containsTri =
-				//TODO: cleaner logic
-				//can expand to fit first triangle which does not entirely fit
-				//subsequent triangles must strictly fit
-				((expanded < BVH_EXPAND_LIMIT) && (
-				(
-					//x1
-					vertData[tri + 0].pos[0] >= m_BVH[i].min[0]
-					&& vertData[tri + 0].pos[0] <= m_BVH[i].max[0]
-					//y1
-					&& vertData[tri + 0].pos[1] >= m_BVH[i].min[1]
-					&& vertData[tri + 0].pos[1] <= m_BVH[i].max[1]
-					//z1
-					&& vertData[tri + 0].pos[2] >= m_BVH[i].min[2]
-					&& vertData[tri + 0].pos[2] <= m_BVH[i].max[2]
-					)
-					|| (
-						//x1
-						vertData[tri + 1].pos[0] >= m_BVH[i].min[0]
-						&& vertData[tri + 1].pos[0] <= m_BVH[i].max[0]
-						//y1
-						&& vertData[tri + 1].pos[1] >= m_BVH[i].min[1]
-						&& vertData[tri + 1].pos[1] <= m_BVH[i].max[1]
-						//z1
-						&& vertData[tri + 1].pos[2] >= m_BVH[i].min[2]
-						&& vertData[tri + 1].pos[2] <= m_BVH[i].max[2]
-						)
-					|| (
-						//x1
-						vertData[tri + 2].pos[0] >= m_BVH[i].min[0]
-						&& vertData[tri + 2].pos[0] <= m_BVH[i].max[0]
-						//y1
-						&& vertData[tri + 2].pos[1] >= m_BVH[i].min[1]
-						&& vertData[tri + 2].pos[1] <= m_BVH[i].max[1]
-						//z1
-						&& vertData[tri + 2].pos[2] >= m_BVH[i].min[2]
-						&& vertData[tri + 2].pos[2] <= m_BVH[i].max[2]
-						)
-					)
-				)||((expanded >= BVH_EXPAND_LIMIT) &&
-					//x1
-					vertData[tri + 0].pos[0] >= m_BVH[i].min[0]
-					&& vertData[tri + 0].pos[0] <= m_BVH[i].max[0]
-					//y1
-					&& vertData[tri + 0].pos[1] >= m_BVH[i].min[1]
-					&& vertData[tri + 0].pos[1] <= m_BVH[i].max[1]
-					//z1
-					&& vertData[tri + 0].pos[2] >= m_BVH[i].min[2]
-					&& vertData[tri + 0].pos[2] <= m_BVH[i].max[2]
-					//x1
-					&& vertData[tri + 1].pos[0] >= m_BVH[i].min[0]
-					&& vertData[tri + 1].pos[0] <= m_BVH[i].max[0]
-					//y1
-					&& vertData[tri + 1].pos[1] >= m_BVH[i].min[1]
-					&& vertData[tri + 1].pos[1] <= m_BVH[i].max[1]
-					//z1
-					&& vertData[tri + 1].pos[2] >= m_BVH[i].min[2]
-					&& vertData[tri + 1].pos[2] <= m_BVH[i].max[2]
-					//x1
-					&& vertData[tri + 2].pos[0] >= m_BVH[i].min[0]
-					&& vertData[tri + 2].pos[0] <= m_BVH[i].max[0]
-					//y1
-					&& vertData[tri + 2].pos[1] >= m_BVH[i].min[1]
-					&& vertData[tri + 2].pos[1] <= m_BVH[i].max[1]
-					//z1
-					&& vertData[tri + 2].pos[2] >= m_BVH[i].min[2]
-					&& vertData[tri + 2].pos[2] <= m_BVH[i].max[2]
+			//can expand to fit first triangle which does not entirely fit
+			//subsequent triangles must strictly fit
+			bool containsV1 = (
+				//x1
+				vertData[tri + 0].pos[0] >= m_BVH[i].min[0]
+				&& vertData[tri + 0].pos[0] <= m_BVH[i].max[0]
+				//y1
+				&& vertData[tri + 0].pos[1] >= m_BVH[i].min[1]
+				&& vertData[tri + 0].pos[1] <= m_BVH[i].max[1]
+				//z1
+				&& vertData[tri + 0].pos[2] >= m_BVH[i].min[2]
+				&& vertData[tri + 0].pos[2] <= m_BVH[i].max[2]
 				);
-			
-			if (containsTri) {
+			bool containsV2 = (
+				//x1
+				vertData[tri + 1].pos[0] >= m_BVH[i].min[0]
+				&& vertData[tri + 1].pos[0] <= m_BVH[i].max[0]
+				//y1
+				&& vertData[tri + 1].pos[1] >= m_BVH[i].min[1]
+				&& vertData[tri + 1].pos[1] <= m_BVH[i].max[1]
+				//z1
+				&& vertData[tri + 1].pos[2] >= m_BVH[i].min[2]
+				&& vertData[tri + 1].pos[2] <= m_BVH[i].max[2]
+				);
+			bool containsV3 = (
+				//x1
+				vertData[tri + 2].pos[0] >= m_BVH[i].min[0]
+				&& vertData[tri + 2].pos[0] <= m_BVH[i].max[0]
+				//y1
+				&& vertData[tri + 2].pos[1] >= m_BVH[i].min[1]
+				&& vertData[tri + 2].pos[1] <= m_BVH[i].max[1]
+				//z1
+				&& vertData[tri + 2].pos[2] >= m_BVH[i].min[2]
+				&& vertData[tri + 2].pos[2] <= m_BVH[i].max[2]
+				);
+
+
+			bool containsPartTri = containsV1 || containsV2 || containsV3;
+			bool containsWholeTri = containsV1 && containsV2 && containsV3;
+
+			if (containsPartTri) {
 
 				bool addedAlready = false;
 
@@ -411,11 +383,11 @@ int OBJLoader::countBVHNeeded(Vertex* vertData, int numVerts, BVH** bvhData) {
 					addedTris++;
 					//std::cout << "TRI IN BVH!" << std::endl;
 					if (m_BVH[i].triIdx.size() < BVH_CHUNK_SIZE) {
-						//add to bvh "chunk"
+						//add to bvh current "chunk"
 						m_BVH[i].triIdx.push_back(tri);
 						addedTriIdxList.push_back(tri);
 
-						if (expanded < BVH_EXPAND_LIMIT) {
+						if (!containsWholeTri && expanded < BVH_EXPAND_LIMIT) {
 							//expand BVH box if needed
 							float maxX = std::max(vertData[tri].pos[0], std::max(vertData[tri + 1].pos[0], vertData[tri + 2].pos[0]));
 							if (m_BVH[i].max[0] < maxX) {
@@ -451,6 +423,7 @@ int OBJLoader::countBVHNeeded(Vertex* vertData, int numVerts, BVH** bvhData) {
 
 					}
 					else {
+						//add to bvh new chunk
 						//TODO: doesn't expand when chunked
 						if (currentRedirect < 0 || m_BVH[currentRedirect].triIdx.size() == BVH_CHUNK_SIZE) {
 							//new BVH chunk required!
