@@ -256,18 +256,26 @@ int OBJLoader::countBVHNeeded(Vertex* vertData, int numVerts, BVH** bvhData) {
 
 	int maxNumBVH[3] = { 1, 1, 1 };
 
-	while (padding[0] >= BVH_BOX_SIZE) {
-		padding[0] -= BVH_BOX_SIZE;
+	float maxSpan = (bvhSpan[0] > bvhSpan[1]) ? bvhSpan[0] : bvhSpan[1];
+	maxSpan = (maxSpan > bvhSpan[2]) ? maxSpan : bvhSpan[2];
+
+	//TODO: finetune generated bvh size when scene data is smaller than original bvh size
+	float bvhBoxDim = (BVH_BOX_SIZE > maxSpan) ? BVH_BOX_SIZE : maxSpan / 20;
+
+	std::cout << "SPAN:" << bvhBoxDim << std::endl;
+
+	while (padding[0] >= bvhBoxDim) {
+		padding[0] -= bvhBoxDim;
 		maxNumBVH[0]++;
 	}
 
-	while (padding[1] >= BVH_BOX_SIZE) {
-		padding[1] -= BVH_BOX_SIZE;
+	while (padding[1] >= bvhBoxDim) {
+		padding[1] -= bvhBoxDim;
 		maxNumBVH[1]++;
 	}
 
-	while (padding[2] >= BVH_BOX_SIZE) {
-		padding[2] -= BVH_BOX_SIZE;
+	while (padding[2] >= bvhBoxDim) {
+		padding[2] -= bvhBoxDim;
 		maxNumBVH[2]++;
 	}
 
@@ -290,13 +298,13 @@ int OBJLoader::countBVHNeeded(Vertex* vertData, int numVerts, BVH** bvhData) {
 
 				m_BVH.push_back(BVH_BAKE());
 
-				m_BVH[currBVH].min[0] = bvhpaddedmin[0] + (x*BVH_BOX_SIZE);
-				m_BVH[currBVH].min[1] = bvhpaddedmin[1] + (y*BVH_BOX_SIZE);
-				m_BVH[currBVH].min[2] = bvhpaddedmin[2] + (z*BVH_BOX_SIZE);
+				m_BVH[currBVH].min[0] = bvhpaddedmin[0] + (x*bvhBoxDim);
+				m_BVH[currBVH].min[1] = bvhpaddedmin[1] + (y*bvhBoxDim);
+				m_BVH[currBVH].min[2] = bvhpaddedmin[2] + (z*bvhBoxDim);
 
-				m_BVH[currBVH].max[0] = bvhpaddedmin[0] + ((x + 1) * BVH_BOX_SIZE);
-				m_BVH[currBVH].max[1] = bvhpaddedmin[1] + ((y + 1) * BVH_BOX_SIZE);
-				m_BVH[currBVH].max[2] = bvhpaddedmin[2] + ((z + 1) * BVH_BOX_SIZE);
+				m_BVH[currBVH].max[0] = bvhpaddedmin[0] + ((x + 1) * bvhBoxDim);
+				m_BVH[currBVH].max[1] = bvhpaddedmin[1] + ((y + 1) * bvhBoxDim);
+				m_BVH[currBVH].max[2] = bvhpaddedmin[2] + ((z + 1) * bvhBoxDim);
 
 				//std::cout << "BVHMIN->(" << m_BVH[currBVH].min[0] << "," << m_BVH[currBVH].min[1] << "," << m_BVH[currBVH].min[2] << ")" << std::endl;
 				//std::cout << "BVHMAX->(" << m_BVH[currBVH].max[0] << "," << m_BVH[currBVH].max[1] << "," << m_BVH[currBVH].max[2] << ")" << std::endl;

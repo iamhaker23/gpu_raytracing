@@ -68,10 +68,10 @@
 
 #include "linmath.h"
 
-#define WIDTH 512
-#define HEIGHT 512
+#define WIDTH 1024
+#define HEIGHT 1024
 #define SHAPE_MODE 0
-#define BVH_DEBUG_VISUALISATION 0
+#define BVH_DEBUG_VISUALISATION 1
 #define CULLING 1
 
  //NOTE: only support power-of-two DRSD values (for maximising GPU utilisation)
@@ -210,6 +210,7 @@ struct Texel {
 
 texture<uchar4, 2, cudaReadModeNormalizedFloat> cudaTex1;
 texture<uchar4, 2, cudaReadModeNormalizedFloat> cudaTex2;
+texture<uchar4, 2, cudaReadModeNormalizedFloat> cudaTex3;
 
 struct Sphere
 {
@@ -764,7 +765,8 @@ __device__ void RaytraceTris(
 	, float orig_x, float orig_y, float orig_z
 	, float light_x, float light_y, float light_z
 	, IntersectionResult* hitlist
-	, int light_mode)
+	, int light_mode
+	, int x1, int y1)
 {
 	
 	//intersectTris(1, verts, hitlist, factor, numTris, orig_x, orig_y, orig_z, ray_x, ray_y, ray_z, -1.0f);
@@ -775,12 +777,21 @@ __device__ void RaytraceTris(
 
 	if (tri < 0) {
 		//miss - background colour (or intersection debug color)
-		if (hitlist->col[0] + hitlist->col[1] + hitlist->col[2] == 0) {
-			blendCol(col, factor, 150, 160, 200);
-		}
-		else {
-			blendCol(col, factor, 255*hitlist->col[0], 255 * hitlist->col[1], 255 * hitlist->col[2]);
-		}
+		//if (hitlist->col[0] + hitlist->col[1] + hitlist->col[2] == 0) {
+			//blendCol(col, factor, 150, 160, 200);
+
+			float4 bgTex = tex2D(cudaTex3, (ray_x +(WIDTH/2))/WIDTH, (ray_y + (HEIGHT / 2)) / HEIGHT);
+
+			blendCol(col, factor
+				, 255 * bgTex.x
+				, 255 * bgTex.y
+				, 255 * bgTex.z
+			);
+
+		//}
+		//else {
+		//	blendCol(col, factor, 255*hitlist->col[0], 255 * hitlist->col[1], 255 * hitlist->col[2]);
+		//}
 	}
 	else {
 
@@ -794,9 +805,10 @@ __device__ void RaytraceTris(
 		diffCol[2] = hitlist->col[2];
 
 		//Tex2D get colors as .xyz
-		diffCol[0] = diffCol[0] * (tex2D(cudaTex1, hitlist->uv[0] , hitlist->uv[1] ).x);
-		diffCol[1] = diffCol[1] * (tex2D(cudaTex1, hitlist->uv[0] , hitlist->uv[1] ).y);
-		diffCol[2] = diffCol[2] * (tex2D(cudaTex1, hitlist->uv[0] , hitlist->uv[1] ).z);
+		float4 diffTex = tex2D(cudaTex1, hitlist->uv[0], hitlist->uv[1]);
+		diffCol[0] = diffCol[0] * diffTex.x;
+		diffCol[1] = diffCol[1] * diffTex.y;
+		diffCol[2] = diffCol[2] * diffTex.z;
 		
 
 		//float normalIntensity = 2.0f;
@@ -824,12 +836,15 @@ __device__ void RaytraceTris(
 		toLight[1] = toLight[1] / distToLight;
 		toLight[2] = toLight[2] / distToLight;
 
+		
 		//tangent space normal (i.e. oriented to triangle)
-		float normalIntensity = 0.1f;
+		float normalIntensity = 0.3f;
 		vec3 nnhitTang = { 0 };
-		nnhitTang[0] = normalIntensity * (tex2D(cudaTex2, hitlist->uv[0], hitlist->uv[1]).x * 2.0 - 1.0);
-		nnhitTang[1] = normalIntensity * (tex2D(cudaTex2, hitlist->uv[0], hitlist->uv[1]).y * 2.0 - 1.0);
-		nnhitTang[2] = -normalIntensity * (tex2D(cudaTex2, hitlist->uv[0], hitlist->uv[1]).z * 2.0 - 1.0);
+
+		float4 normTex = tex2D(cudaTex2, hitlist->uv[0], hitlist->uv[1]);
+		nnhitTang[0] = 1 * (normTex.x * 2.0 - 1.0);
+		nnhitTang[1] = 1 * (normTex.y * 2.0 - 1.0);
+		nnhitTang[2] = -normalIntensity * (normTex.z * 2.0 - 1.0);
 		//Convert tangent-space bump map to world-space
 		nnhitTang[0] = dotAxis(nnhitTang, 0, 1);
 		nnhitTang[1] = dotAxis(nnhitTang, 1, 1);
@@ -842,10 +857,12 @@ __device__ void RaytraceTris(
 		nnhit[0] += nnhitTang[0];
 		nnhit[1] += nnhitTang[1];
 		nnhit[2] += nnhitTang[2];
+		//renormalize
 		float nh2 = magnitude(nnhit);
 		nnhit[0] /= nh2;
 		nnhit[1] /= nh2;
 		nnhit[2] /= nh2;
+		
 
 		//toLight in tri tangent-space
 		vec3 toLightTang = { 0 };
@@ -883,17 +900,18 @@ __device__ void RaytraceTris(
 
 		int shadowCaster = hitlist->triIndex;
 
-		float m = 0.05f;
-		float mr = 1;
+		float m = 0.1f;
 
 		// no shadow caster, do shading
 		if (shadowCaster == -1 || shadowCaster == tri) {
 
+			/*
 			vec3 nnnhitTang = { 0 };
 			nnnhitTang[0] = -nnhitTang[0];
 			nnnhitTang[1] = -nnhitTang[1];
 			nnnhitTang[2] = -nnhitTang[2];
-			
+			*/
+
 			m = max(m,
 				 max(
 					(dot(toLight,nnnhit))
@@ -901,6 +919,7 @@ __device__ void RaytraceTris(
 				)
 			);
 			
+			/*
 			vec3 raydirTang = { 0 };
 			raydirTang[0] = raydir[0];
 			raydirTang[1] = raydir[1];
@@ -912,7 +931,7 @@ __device__ void RaytraceTris(
 			raydirTang[0] = raydirTang[0] / drdt;
 			raydirTang[1] = raydirTang[1] / drdt;
 			raydirTang[2] = raydirTang[2] / drdt;
-			
+			*/
 
 			vec3 halfwayDir = { 0 };
 			halfwayDir[0] = toLight[0] + raydir[0];
@@ -930,9 +949,7 @@ __device__ void RaytraceTris(
 			);
 			
 			//TODO: spec has weird pattern
-			m = (0.5f*(spec * spec * spec)*m)+(0.5f*m);
-			
-			mr = m;
+			m = max(0.1f, (0.5f*(spec * spec * spec)*m) + (0.5f*m));
 		}
 
 		/*
@@ -950,7 +967,7 @@ __device__ void RaytraceTris(
 		nraydir[1] = -ray_y / raydirmag;
 		nraydir[2] = -ray_z / raydirmag;
 
-		float facingratio = dot(nraydir, nnhit);
+		float facingratio = dot(raydir, nnnhit);
 
 		float fresneleffect = (light_mode == 0) ? 1.0f : 0.5f;// max(0.1f, ((0.9f * (1 - facingratio) * (1 - facingratio) * (1 - facingratio)) + 0.1f));
 		fresneleffect = min(fresneleffect, 1.0f);
@@ -1065,7 +1082,7 @@ __device__ void RaytraceTris(
 		float diffuseBlend = (depth+1 == MAX_RAY_DEPTH) ? 1.0f : 0.8f;
 		
 
-		diffCol[0] = diffCol[0] * mr;
+		diffCol[0] = diffCol[0] * m;
 		diffCol[1] = diffCol[1] * m;
 		diffCol[2] = diffCol[2] * m;
 
@@ -1098,11 +1115,12 @@ __device__ void RaytraceTris(
 				, hitPos[0] + nnhit[0] * 1e-2, hitPos[1] + nnhit[1] * 1e-2, hitPos[2] + nnhit[2] * 1e-2
 				, light_x, light_y, light_z
 				, hitlist
-				, light_mode);
+				, light_mode
+				, x1, y1);
 			//raytrace refr
 			//factor = (1.0f - diffuseBlend) * (1 - fresneleffect) * transp
 			if (light_mode >= 2) RaytraceTris<depth+1>(col
-				, (1.0f - diffuseBlend) * (1 - fresneleffect) * transp
+				, (1.0f - diffuseBlend) * (1 - fresneleffect ) * transp
 				//, 1.0f
 				, bvh
 				, numBVH
@@ -1112,7 +1130,8 @@ __device__ void RaytraceTris(
 				, hitPos[0] + nnhit[0] * 1e-2, hitPos[1] + nnhit[1] * 1e-2, hitPos[2] + nnhit[2] * 1e-2
 				, light_x, light_y, light_z
 				, hitlist
-				, light_mode);
+				, light_mode
+				, x1, y1);
 		}
 
 		//float colMag = magnitude(diffCol);
@@ -1152,12 +1171,19 @@ __device__ void RaytraceTris<MAX_RAY_DEPTH>(
 	, float orig_x, float orig_y, float orig_z
 	, float light_x, float light_y, float light_z
 	, IntersectionResult* hitlist
-	, int light_mode)
+	, int light_mode
+	,int x1, int y1)
 {
-	blendCol(col, factor*0.5f
-		, 255
-		, 255
-		, 0);
+
+	float4 bgTex = tex2D(cudaTex3, (ray_x + (WIDTH / 2)) / WIDTH, (ray_y + (HEIGHT / 2)) / HEIGHT);
+
+	blendCol(col, factor
+		, 255 * bgTex.x
+		, 255 * bgTex.y
+		, 255 * bgTex.z
+	);
+
+	//blendCol(col, factor*0.5f		, 255		, 255		, 0);
 	return;
 }
 
@@ -1604,6 +1630,7 @@ __global__ void get_raytraced_pixels(
 			, light_x, light_y, light_z
 			, &hitlist[(raw_y * (WIDTH/(squareDim))) + (raw_x)]
 			, light_mode
+			, x, y
 			);
 
 #endif
@@ -1811,6 +1838,7 @@ private:
 
 	cudaArray *cudaTex1Array;
 	cudaArray *cudaTex2Array;
+	cudaArray *cudaTex3Array;
 
 	VkBuffer stagingBuffer;
 	VkDeviceMemory stagingBufferMemory;
@@ -1818,6 +1846,7 @@ private:
 	stbi_uc* pixels;
 	stbi_uc* texture1;
 	stbi_uc* texture2;
+	stbi_uc* texture3;
 
 	size_t vertexBufSize = 0;
 	bool startSubmit = 0;
@@ -3177,7 +3206,22 @@ private:
 
 		// Bind the array to the texture
 		checkCudaErrors(cudaBindTextureToArray(cudaTex2, cudaTex2Array, channelDesc));
-		
+
+		//BG TEXTURE
+		checkCudaErrors(cudaMallocArray(&cudaTex3Array, &channelDesc, WIDTH, HEIGHT));
+		cudaMemcpyToArray(cudaTex3Array, 0, 0, texture3, WIDTH*HEIGHT * sizeof(uchar4), cudaMemcpyHostToDevice);
+
+		// Set texture parameters
+		cudaTex3.normalized = true;
+		cudaTex3.filterMode = cudaFilterModeLinear; //= cudaFilterModePoint;  
+		cudaTex3.addressMode[0] = cudaAddressModeWrap;
+		cudaTex3.addressMode[1] = cudaAddressModeWrap;
+		cudaTex3.addressMode[2] = cudaAddressModeWrap;
+
+		// Bind the array to the texture
+		checkCudaErrors(cudaBindTextureToArray(cudaTex3, cudaTex3Array, channelDesc));
+
+
 		checkCudaErrors(cudaStreamSynchronize(streamToRun));
 	}
 
@@ -3788,7 +3832,14 @@ private:
 			throw std::runtime_error("failed to load objtexturebump.jpg!");
 		}
 
-		//Image load 3 - texture used by Vulkan (to blit first frame, i.e. instructions)
+		//Image load 3 - texture used by cuda for objects bump
+		texture3 = (stbi_uc*)stbi_load("Assets/bg.jpg", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+
+		if (!texture3) {
+			throw std::runtime_error("failed to load bg.jpg!");
+		}
+
+		//Image load ... - texture used by Vulkan (to blit first frame, i.e. instructions)
 		if (loadFromFile) {
 
 			pixels = (stbi_uc*)stbi_load("Assets/texture.jpg", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
@@ -4283,8 +4334,9 @@ private:
 		vkDestroyBuffer(device, stagingBuffer, nullptr);
 		vkFreeMemory(device, stagingBufferMemory, nullptr);
 		
-		stbi_image_free(texture1); 
+		stbi_image_free(texture1);
 		stbi_image_free(texture2);
+		stbi_image_free(texture3);
 		if (loadFromFile) stbi_image_free(pixels);
 		
 		vkDestroyImage(device, textureImage, nullptr);

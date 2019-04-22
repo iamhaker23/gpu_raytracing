@@ -2,7 +2,7 @@
 #include "linmath.h"
 
 #define BVH_CHUNK_SIZE 60
-#define BVH_BOX_SIZE 500.0f
+#define BVH_BOX_SIZE 250.0f
 #define BVH_EXPAND_LIMIT 800.0f
 #define VERT_IMPORT_SCALE 1000.0f
 
