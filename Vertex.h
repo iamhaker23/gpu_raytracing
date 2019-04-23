@@ -1,9 +1,11 @@
 #pragma once
 #include "linmath.h"
 
-#define BVH_CHUNK_SIZE 60
+//TODO: handle chunking correctly (need to add chunked BVH at "count time" but currently uses pointer) 
+#define BVH_CHUNK_SIZE 600
+
 #define BVH_BOX_SIZE 250.0f
-#define BVH_EXPAND_LIMIT 800.0f
+#define BVH_EXPAND_LIMIT 2500.0f
 #define VERT_IMPORT_SCALE 1000.0f
 
 struct BVH {
@@ -12,9 +14,16 @@ struct BVH {
 	int numTris;
 	int triIdx[BVH_CHUNK_SIZE] = { 0 };
 
+	int depth = 0;
+	int children[8] = { 0 };
+	int nextOctree = -1;
+
 	BVH() {
 		for (int i = 0; i < BVH_CHUNK_SIZE; i++) {
 			triIdx[i] = -1;
+		}
+		for (int i = 0; i < 8; i++) {
+			children[i] = -1;
 		}
 	}
 
@@ -31,8 +40,55 @@ struct BVH_BAKE {
 
 	BVH_BAKE() {
 		triIdx = std::vector<int>();
+		children = std::vector<BVH_BAKE>();
+
 	}
 
+	std::vector<BVH_BAKE> children;
+
+	void refreshChildren() {
+		
+		if (children.size() < 8) {
+			for (int c = 0; c < 8; c++) {
+				children.push_back(BVH_BAKE());
+			}
+		}
+
+		vec3 xStep = { 0 };
+		vec3 yStep = { 0 };
+		vec3 zStep = { 0 };
+
+		xStep[0] = min[0];
+		yStep[0] = min[1];
+		zStep[0] = min[2];
+
+		xStep[2] = max[0];
+		yStep[2] = max[1];
+		zStep[2] = max[2];
+
+		xStep[1] = xStep[0] + ((xStep[2] - xStep[0]) / 2.0f);
+		yStep[1] = yStep[0] + ((yStep[2] - yStep[0]) / 2.0f);
+		zStep[1] = zStep[0] + ((zStep[2] - zStep[0]) / 2.0f);
+
+		int current[3] = { 0, 0, 0 };
+		for (unsigned int c = 0; c < 8; c++) {
+
+			current[0] = (c & 0b100) ? 1 : 0;
+			current[1] = (c & 0b010) ? 1 : 0;
+			current[2] = (c & 0b001) ? 1 : 0;
+
+			//std::cout << "CURRENT:" << current[0] << "," << current[1] << "," << current[2] << std::endl;
+
+			children[c].min[0] = xStep[current[0]];
+			children[c].min[1] = yStep[current[1]];
+			children[c].min[2] = zStep[current[2]];
+
+			children[c].max[0] = xStep[current[0]+1];
+			children[c].max[1] = yStep[current[1]+1];
+			children[c].max[2] = zStep[current[2]+1];
+
+		}
+	}
 };
 
 struct Vertex {

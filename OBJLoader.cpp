@@ -1,5 +1,6 @@
 #include "OBJLoader.h"
 
+#define NO_LOSS_BVH 1
 
 std::vector<vector3d> OBJLoader::m_vVertices = std::vector<vector3d>();
 std::vector<vector3d> OBJLoader::m_vNormals = std::vector<vector3d>();
@@ -20,6 +21,13 @@ void cross(vec3 &out, vec3 a, vec3 b) {
 	out[1] = a[2] * b[0] - a[0] * b[2];
 	//cx = axby - aybx
 	out[2] = a[0] * b[1] - a[1] * b[0];
+}
+
+float max(float a, float b) {
+	return (a > b) ? a : b;
+}
+float min(float a, float b) {
+	return (a < b) ? a : b;
 }
 
 int OBJLoader::loadRawVertexList(const char * fileName, Vertex** vertData) {
@@ -211,7 +219,257 @@ void OBJLoader::loadVertices(Vertex* vertData, int numVerts) {
 }
 
 
-int OBJLoader::countBVHNeeded(Vertex* vertData, int numVerts, BVH** bvhData) {
+bool OBJLoader::doesTriIntersectBox(vec4 &verta, vec4 &vertb, vec4 &vertc, BVH_BAKE* bvh) {
+
+	vec3 raydir = { 0 };
+	raydir[0] = vertb[0] - verta[0];
+	raydir[1] = vertb[1] - verta[1];
+	raydir[2] = vertb[2] - verta[2];
+	float raydirmag = sqrtf(raydir[0] * raydir[0] + raydir[1] * raydir[1] + raydir[2] * raydir[2]);
+	raydir[0] = 1.0f / raydir[0];
+	raydir[1] = 1.0f / raydir[1];
+	raydir[2] = 1.0f / raydir[2];
+
+	vec3 t0s = { 0 };
+	t0s[0] = ((bvh->min[0] - (verta[0])) * (raydir[0]));
+	t0s[1] = ((bvh->min[1] - (verta[1])) * (raydir[1]));
+	t0s[2] = ((bvh->min[2] - (verta[2])) * (raydir[2]));
+
+	vec3 t1s = { 0 };
+	t1s[0] = ((bvh->max[0] - (verta[0])) * (raydir[0]));
+	t1s[1] = ((bvh->max[1] - (verta[1])) * (raydir[1]));
+	t1s[2] = ((bvh->max[2] - (verta[2])) * (raydir[2]));
+
+	float tmin = max(min(t0s[0], t1s[0]), max(min(t0s[1], t1s[1]), min(t0s[2], t1s[2])));
+	float tmax = min(max(t0s[0], t1s[0]), min(max(t0s[1], t1s[1]), max(t0s[2], t1s[2])));
+
+	if (tmin > 0 && tmin < 1 && tmin < tmax) {
+		//hit
+
+		return true;
+
+	}
+	else {
+
+		raydir[0] = vertb[0] - vertc[0];
+		raydir[1] = vertb[1] - vertc[1];
+		raydir[2] = vertb[2] - vertc[2];
+		//float raydirmag = sqrtf(raydir[0] * raydir[0] + raydir[1] * raydir[1] + raydir[2] * raydir[2]);
+		raydir[0] = 1.0f / raydir[0];
+		raydir[1] = 1.0f / raydir[1];
+		raydir[2] = 1.0f / raydir[2];
+
+		t0s[0] = ((bvh->min[0] - (vertc[0])) * (raydir[0]));
+		t0s[1] = ((bvh->min[1] - (vertc[1])) * (raydir[1]));
+		t0s[2] = ((bvh->min[2] - (vertc[2])) * (raydir[2]));
+
+		t1s[0] = ((bvh->max[0] - (vertc[0])) * (raydir[0]));
+		t1s[1] = ((bvh->max[1] - (vertc[1])) * (raydir[1]));
+		t1s[2] = ((bvh->max[2] - (vertc[2])) * (raydir[2]));
+
+		float tmin = max(min(t0s[0], t1s[0]), max(min(t0s[1], t1s[1]), min(t0s[2], t1s[2])));
+		float tmax = min(max(t0s[0], t1s[0]), min(max(t0s[1], t1s[1]), max(t0s[2], t1s[2])));
+		
+		if (tmin > 0 && tmin < 1 && tmin < tmax) {
+			//hit
+			return true;
+		}
+		else {
+
+			raydir[0] = verta[0] - vertc[0];
+			raydir[1] = verta[1] - vertc[1];
+			raydir[2] = verta[2] - vertc[2];
+			//float raydirmag = sqrtf(raydir[0] * raydir[0] + raydir[1] * raydir[1] + raydir[2] * raydir[2]);
+			raydir[0] = 1.0f / raydir[0];
+			raydir[1] = 1.0f / raydir[1];
+			raydir[2] = 1.0f / raydir[2];
+
+			t0s[0] = ((bvh->min[0] - (vertc[0])) * (raydir[0]));
+			t0s[1] = ((bvh->min[1] - (vertc[1])) * (raydir[1]));
+			t0s[2] = ((bvh->min[2] - (vertc[2])) * (raydir[2]));
+
+			t1s[0] = ((bvh->max[0] - (vertc[0])) * (raydir[0]));
+			t1s[1] = ((bvh->max[1] - (vertc[1])) * (raydir[1]));
+			t1s[2] = ((bvh->max[2] - (vertc[2])) * (raydir[2]));
+
+			float tmin = max(min(t0s[0], t1s[0]), max(min(t0s[1], t1s[1]), min(t0s[2], t1s[2])));
+			float tmax = min(max(t0s[0], t1s[0]), min(max(t0s[1], t1s[1]), max(t0s[2], t1s[2])));
+
+			if (tmin > 0 && tmin < 1 && tmin < tmax) {
+				//hit
+				return true;
+			}
+		}
+	}
+
+	return false;
+
+}
+
+int OBJLoader::putVertsInBVH(Vertex* vertData, int numVerts, BVH_BAKE* bvh, int depth){
+
+	int currentRedirect = -1;
+	int addedTris = 0;
+	std::vector<int> addedTriIdxList = std::vector<int>();
+	float expanded = 0.0f;
+
+	for (int tri = 0; tri < numVerts; tri += 3) {
+
+		//std::cout << "TESTING " << tri << "-> " << bvh->min[0] << " < " << vertData[tri + 0].pos[0] << " < " << bvh->max[0] << std::endl;
+
+		//can expand to fit first triangle which does not entirely fit
+		//subsequent triangles must strictly fit
+		bool containsV1 = (
+			//x1
+			vertData[tri + 0].pos[0] >= bvh->min[0]
+			&& vertData[tri + 0].pos[0] <= bvh->max[0]
+			//y1
+			&& vertData[tri + 0].pos[1] >= bvh->min[1]
+			&& vertData[tri + 0].pos[1] <= bvh->max[1]
+			//z1
+			&& vertData[tri + 0].pos[2] >= bvh->min[2]
+			&& vertData[tri + 0].pos[2] <= bvh->max[2]
+			);
+		bool containsV2 = (
+			//x1
+			vertData[tri + 1].pos[0] >= bvh->min[0]
+			&& vertData[tri + 1].pos[0] <= bvh->max[0]
+			//y1
+			&& vertData[tri + 1].pos[1] >= bvh->min[1]
+			&& vertData[tri + 1].pos[1] <= bvh->max[1]
+			//z1
+			&& vertData[tri + 1].pos[2] >= bvh->min[2]
+			&& vertData[tri + 1].pos[2] <= bvh->max[2]
+			);
+		bool containsV3 = (
+			//x1
+			vertData[tri + 2].pos[0] >= bvh->min[0]
+			&& vertData[tri + 2].pos[0] <= bvh->max[0]
+			//y1
+			&& vertData[tri + 2].pos[1] >= bvh->min[1]
+			&& vertData[tri + 2].pos[1] <= bvh->max[1]
+			//z1
+			&& vertData[tri + 2].pos[2] >= bvh->min[2]
+			&& vertData[tri + 2].pos[2] <= bvh->max[2]
+			);
+
+
+		bool containsPartTri = containsV1 || containsV2 || containsV3;
+		bool containsWholeTri = containsV1 && containsV2 && containsV3;
+
+		//bool triIntersects = (containsPartTri) ? false : doesTriIntersectBox(vertData[tri + 0].pos, vertData[tri + 1].pos, vertData[tri + 2].pos, bvh);
+
+		
+
+#if NO_LOSS_BVH == 1
+		//triangle might intersect bvh but is so big that no verts are actually within the bvh!
+		bool triIntersects = false;
+
+		if (!containsPartTri) {
+			vec3 boxhalfsize = { 0 };
+			boxhalfsize[0] = (bvh->max[0] - bvh->min[0]) / 2.0f;
+			boxhalfsize[1] = (bvh->max[1] - bvh->min[1]) / 2.0f;
+			boxhalfsize[2] = (bvh->max[2] - bvh->min[2]) / 2.0f;
+			vec3 boxcenter = { 0 };
+			boxcenter[0] = bvh->min[0] + boxhalfsize[0];
+			boxcenter[1] = bvh->min[1] + boxhalfsize[1];
+			boxcenter[2] = bvh->min[2] + boxhalfsize[2];
+
+			triIntersects = triBoxOverlap(boxcenter, boxhalfsize, vertData[tri + 0].pos, vertData[tri + 1].pos, vertData[tri + 2].pos, vertData[tri + 0].normal);
+		}
+
+		if (containsPartTri || triIntersects) {
+#else
+		if (containsPartTri) {
+#endif
+			bool addedAlready = false;
+
+			//Allow adding multiple times!!!
+			
+			
+			for (int a = 0; a < addedTriIdxList.size(); a++) {
+				if (addedTriIdxList[a] == tri) {
+					addedAlready = true;
+					break;
+				}
+			}
+			
+
+			if (!addedAlready || true) {
+
+				if (!addedAlready) addedTris++;
+
+				//add to bvh current "chunk"
+				bvh->triIdx.push_back(tri);
+				addedTriIdxList.push_back(tri);
+					
+				//NOTE: expanding bvh solves issue of tri clipping
+				/*
+					if (!containsWholeTri && depth == 1 && expanded < BVH_EXPAND_LIMIT) {
+					//expand BVH box if needed
+					float maxX = std::max(vertData[tri].pos[0], std::max(vertData[tri + 1].pos[0], vertData[tri + 2].pos[0]));
+					if (bvh->max[0] < maxX) {
+						expanded += maxX - bvh->max[0];
+						bvh->max[0] = maxX;
+					}
+					float maxY = std::max(vertData[tri].pos[1], std::max(vertData[tri + 1].pos[1], vertData[tri + 2].pos[1]));
+					if (bvh->max[1] < maxY) {
+						expanded += maxY - bvh->max[1];
+						bvh->max[1] = maxY;
+					}
+					float maxZ = std::max(vertData[tri].pos[2], std::max(vertData[tri + 1].pos[2], vertData[tri + 2].pos[2]));
+					if (bvh->max[2] < maxZ) {
+						expanded += maxZ - bvh->max[2];
+						bvh->max[2] = maxZ;
+					}
+					float minX = std::min(vertData[tri].pos[0], std::min(vertData[tri + 1].pos[0], vertData[tri + 2].pos[0]));
+					if (bvh->min[0] > minX) {
+						expanded += bvh->min[0] - minX;
+						bvh->min[0] = minX;
+					}
+					float minY = std::min(vertData[tri].pos[1], std::min(vertData[tri + 1].pos[1], vertData[tri + 2].pos[1]));
+					if (bvh->min[1] > minY) {
+						expanded += bvh->min[1] - minY;
+						bvh->min[1] = minY;
+					}
+					float minZ = std::min(vertData[tri].pos[2], std::min(vertData[tri + 1].pos[2], vertData[tri + 2].pos[2]));
+					if (bvh->min[2] > minZ) {
+						expanded += bvh->min[2] - minZ;
+						bvh->min[2] = minZ;
+					}
+				}
+				*/
+			}
+		}
+	}
+
+	if (depth < MAX_BVH_DEPTH) {
+		
+		if (addedTris > 0) {
+
+			//TODO: also do this if bvh expanded
+			if (bvh->children.size() == 0) {
+				//Create or Recalculate child octrees
+				bvh->refreshChildren();
+			}
+
+			int addedToChildren = 0;
+
+			for (int child = 0; child < bvh->children.size(); child++) {
+				//do not account for triangles because they are already added in parent
+				addedToChildren += putVertsInBVH(vertData, numVerts, &bvh->children[child], depth + 1);
+			}
+
+			std::cout << "Added " << addedToChildren << " to children at depth " << depth << std::endl;
+
+		}
+	}
+
+	return addedTris;
+}
+
+
+int OBJLoader::countBVHNeeded(Vertex* vertData, int numVerts) {
 	//getmin,max bounds
 	int maxVert[3] = { -1, -1, -1 };
 	int minVert[3] = { -1, -1, -1 };
@@ -258,9 +516,10 @@ int OBJLoader::countBVHNeeded(Vertex* vertData, int numVerts, BVH** bvhData) {
 
 	float maxSpan = (bvhSpan[0] > bvhSpan[1]) ? bvhSpan[0] : bvhSpan[1];
 	maxSpan = (maxSpan > bvhSpan[2]) ? maxSpan : bvhSpan[2];
-
-	//TODO: finetune generated bvh size when scene data is smaller than original bvh size
-	float bvhBoxDim = (BVH_BOX_SIZE > maxSpan) ? BVH_BOX_SIZE : maxSpan / 20;
+	
+	//TODO: finetune -> large impact on octree balance and thus performance
+	//float bvhBoxDim = (BVH_BOX_SIZE > maxSpan) ? BVH_BOX_SIZE : maxSpan / 5;
+	float bvhBoxDim = maxSpan / 4;
 
 	std::cout << "SPAN:" << bvhBoxDim << std::endl;
 
@@ -314,150 +573,27 @@ int OBJLoader::countBVHNeeded(Vertex* vertData, int numVerts, BVH** bvhData) {
 		}
 	}
 
-	int currentRedirect = -1;
-	int chunks = 0;
+	//int currentRedirect = -1;
+	//int chunks = 0;
 
 	int addedTris = 0;
 
 	std::cout << "Verts to BVH:" << numVerts << std::endl;
 
-	bool expanded = 0.0f;
+	//bool expanded = 0.0f;
 
-	std::vector<int> addedTriIdxList = std::vector<int>();
+	//std::vector<int> addedTriIdxList = std::vector<int>();
 
-	//fill bvh vert lists
+	//foreach bvh, add un-added verts that intersect bvh
+	//aka. fill bvh vert lists
 	for (int i = 0; i < m_BVH.size(); i++) {
 
-		currentRedirect = -1;
-		expanded = 0.0f;
+		addedTris += OBJLoader::putVertsInBVH(vertData, numVerts, &m_BVH[i], 1);
 
-		for (int tri = 0; tri < numVerts; tri += 3) {
-
-			//std::cout << "TESTING " << tri << "-> " << m_BVH[i].min[0] << " < " << vertData[tri + 0].pos[0] << " < " << m_BVH[i].max[0] << std::endl;
-
-			//can expand to fit first triangle which does not entirely fit
-			//subsequent triangles must strictly fit
-			bool containsV1 = (
-				//x1
-				vertData[tri + 0].pos[0] >= m_BVH[i].min[0]
-				&& vertData[tri + 0].pos[0] <= m_BVH[i].max[0]
-				//y1
-				&& vertData[tri + 0].pos[1] >= m_BVH[i].min[1]
-				&& vertData[tri + 0].pos[1] <= m_BVH[i].max[1]
-				//z1
-				&& vertData[tri + 0].pos[2] >= m_BVH[i].min[2]
-				&& vertData[tri + 0].pos[2] <= m_BVH[i].max[2]
-				);
-			bool containsV2 = (
-				//x1
-				vertData[tri + 1].pos[0] >= m_BVH[i].min[0]
-				&& vertData[tri + 1].pos[0] <= m_BVH[i].max[0]
-				//y1
-				&& vertData[tri + 1].pos[1] >= m_BVH[i].min[1]
-				&& vertData[tri + 1].pos[1] <= m_BVH[i].max[1]
-				//z1
-				&& vertData[tri + 1].pos[2] >= m_BVH[i].min[2]
-				&& vertData[tri + 1].pos[2] <= m_BVH[i].max[2]
-				);
-			bool containsV3 = (
-				//x1
-				vertData[tri + 2].pos[0] >= m_BVH[i].min[0]
-				&& vertData[tri + 2].pos[0] <= m_BVH[i].max[0]
-				//y1
-				&& vertData[tri + 2].pos[1] >= m_BVH[i].min[1]
-				&& vertData[tri + 2].pos[1] <= m_BVH[i].max[1]
-				//z1
-				&& vertData[tri + 2].pos[2] >= m_BVH[i].min[2]
-				&& vertData[tri + 2].pos[2] <= m_BVH[i].max[2]
-				);
-
-
-			bool containsPartTri = containsV1 || containsV2 || containsV3;
-			bool containsWholeTri = containsV1 && containsV2 && containsV3;
-
-			if (containsPartTri) {
-
-				bool addedAlready = false;
-
-				for (int a = 0; a < addedTriIdxList.size(); a++) {
-					if (addedTriIdxList[a] == tri) {
-						addedAlready = true;
-						break;
-					}
-				}
-
-				if (!addedAlready) {
-
-					addedTris++;
-					//std::cout << "TRI IN BVH!" << std::endl;
-					if (m_BVH[i].triIdx.size() < BVH_CHUNK_SIZE) {
-						//add to bvh current "chunk"
-						m_BVH[i].triIdx.push_back(tri);
-						addedTriIdxList.push_back(tri);
-
-						if (!containsWholeTri && expanded < BVH_EXPAND_LIMIT) {
-							//expand BVH box if needed
-							float maxX = std::max(vertData[tri].pos[0], std::max(vertData[tri + 1].pos[0], vertData[tri + 2].pos[0]));
-							if (m_BVH[i].max[0] < maxX) {
-								expanded += maxX - m_BVH[i].max[0];
-								m_BVH[i].max[0] = maxX;
-							}
-							float maxY = std::max(vertData[tri].pos[1], std::max(vertData[tri + 1].pos[1], vertData[tri + 2].pos[1]));
-							if (m_BVH[i].max[1] < maxY) {
-								expanded += maxY - m_BVH[i].max[1];
-								m_BVH[i].max[1] = maxY;
-							}
-							float maxZ = std::max(vertData[tri].pos[2], std::max(vertData[tri + 1].pos[2], vertData[tri + 2].pos[2]));
-							if (m_BVH[i].max[2] < maxZ) {
-								expanded += maxZ - m_BVH[i].max[2];
-								m_BVH[i].max[2] = maxZ;
-							}
-							float minX = std::min(vertData[tri].pos[0], std::min(vertData[tri + 1].pos[0], vertData[tri + 2].pos[0]));
-							if (m_BVH[i].min[0] > minX) {
-								expanded += m_BVH[i].min[0] - minX;
-								m_BVH[i].min[0] = minX;
-							}
-							float minY = std::min(vertData[tri].pos[1], std::min(vertData[tri + 1].pos[1], vertData[tri + 2].pos[1]));
-							if (m_BVH[i].min[1] > minY) {
-								expanded += m_BVH[i].min[1] - minY;
-								m_BVH[i].min[1] = minY;
-							}
-							float minZ = std::min(vertData[tri].pos[2], std::min(vertData[tri + 1].pos[2], vertData[tri + 2].pos[2]));
-							if (m_BVH[i].min[2] > minZ) {
-								expanded += m_BVH[i].min[2] - minZ;
-								m_BVH[i].min[2] = minZ;
-							}
-						}
-
-					}
-					else {
-						//add to bvh new chunk
-						//TODO: doesn't expand when chunked
-						if (currentRedirect < 0 || m_BVH[currentRedirect].triIdx.size() == BVH_CHUNK_SIZE) {
-							//new BVH chunk required!
-							m_BVH.push_back(BVH_BAKE());
-							currentRedirect = m_BVH.size() - 1;
-							chunks++;
-
-							m_BVH[currentRedirect].max[0] = m_BVH[i].max[0];
-							m_BVH[currentRedirect].max[1] = m_BVH[i].max[1];
-							m_BVH[currentRedirect].max[2] = m_BVH[i].max[2];
-
-							m_BVH[currentRedirect].min[0] = m_BVH[i].min[0];
-							m_BVH[currentRedirect].min[1] = m_BVH[i].min[1];
-							m_BVH[currentRedirect].min[2] = m_BVH[i].min[2];
-						}
-						//use current redirect BVH chunk
-						m_BVH[currentRedirect].triIdx.push_back(tri);
-						addedTriIdxList.push_back(tri);
-					}
-				}
-			}
-		}
 	}
 
 	std::cout << "Added tris to BVH: " << addedTris << std::endl;
-	std::cout << "BVH chunks: " << chunks << std::endl;
+	//std::cout << "BVH chunks: " << chunks << std::endl;
 
 	//return totalnumber of non-zero-containing bvh
 	int numFilledBVH = 0;
@@ -469,47 +605,104 @@ int OBJLoader::countBVHNeeded(Vertex* vertData, int numVerts, BVH** bvhData) {
 
 	std::cout << "Filled " << numFilledBVH << " boxes from " << m_BVH.size() << " total" << std::endl;
 
-	return numFilledBVH;
+
+	int BVHPerOctree = 0;
+	for (int i = 1; i <= MAX_BVH_DEPTH; i++) {
+		BVHPerOctree += pow(8, MAX_BVH_DEPTH-i);
+	}
+
+	std::cout << BVHPerOctree << " BVH per octree with depth " << MAX_BVH_DEPTH << std::endl;
+
+	return numFilledBVH * BVHPerOctree;
 }
 
-void OBJLoader::createBVH(BVH* bvhData, int numBVH, Vertex* vertData, int numVerts) {
+int OBJLoader::putBVH(BVH* bvhData, BVH_BAKE* bvh, Vertex* vertData, int numVerts, int bvhIdx, int depth) {
+	
+	int added = 0;
+	if (bvh->hasVerts()) {
+
+		bvhData[bvhIdx] = BVH();
+		bvhData[bvhIdx].min[0] = bvh->min[0];
+		bvhData[bvhIdx].min[1] = bvh->min[1];
+		bvhData[bvhIdx].min[2] = bvh->min[2];
+
+		bvhData[bvhIdx].max[0] = bvh->max[0];
+		bvhData[bvhIdx].max[1] = bvh->max[1];
+		bvhData[bvhIdx].max[2] = bvh->max[2];
+
+		bvhData[bvhIdx].depth = depth;
+
+		//std::cout << depth << ": BVH->max(" << bvhData[bvhIdx].max[0] << "," << bvhData[bvhIdx].max[1] << "," << bvhData[bvhIdx].max[2] << ")" << std::endl;
+		//std::cout << depth << ": BVH->min(" << bvhData[bvhIdx].min[0] << "," << bvhData[bvhIdx].min[1] << "," << bvhData[bvhIdx].min[2] << ")" << std::endl;
+
+		int numTrisToAdd = bvh->triIdx.size();
+
+		std::cout << "Tris to add:" << numTrisToAdd << std::endl;
+
+		if (numTrisToAdd > BVH_CHUNK_SIZE) throw new std::exception("Tried to add too many tris to BVH box");
+
+		//int requiredtriLists = (numTrisToAdd <= BVH_CHUNK_SIZE) ? 1 : static_cast<int>(ceilf(static_cast<float>(numTrisToAdd) / static_cast<float>(BVH_CHUNK_SIZE)));
+
+		//bvhData[bvhIdx].numTris = (requiredtriLists == 1) ? numTrisToAdd : BVH_CHUNK_SIZE;
+		bvhData[bvhIdx].numTris = numTrisToAdd;
+		//for (int chunk = 0; chunk < requiredtriLists; chunk++) {
+			for (int t = 0; t < numTrisToAdd; t++) {
+				//std::cout << "Adding " << t << "=" << bvh->triIdx[t] << std::endl;
+				bvhData[bvhIdx].triIdx[t] = bvh->triIdx[t];
+			}
+		//}
+
+		added++;
+
+		//Tail recursion gives post-order
+		//Parent -> 
+		//child1 -> grandchildren -> ... 
+		//child2 -> grandchildren -> ...
+		// ...
+		//child8 -> grandchildren -> ...
+		if (depth < MAX_BVH_DEPTH) {
+			for (int child = 0; child < bvh->children.size(); child++) {
+				
+				int descendants = putBVH(bvhData, &bvh->children[child], vertData, numVerts, bvhIdx + added, depth+1);
+				
+				//record (relative) index of child
+				if (descendants > 0) bvhData[bvhIdx].children[child] = added;
+
+				added += descendants;
+
+			}
+		}
+
+	}
+	return added;
+}
+
+int OBJLoader::createBVH(BVH* bvhData, int numBVH, Vertex* vertData, int numVerts) {
 
 	int added = 0;
+	int lastAdded = -1;
+	int octree = 0;
 	//NOTE: m_BVH may contain more than totalMaxNumBVH due to chunking!
 	for (int i = 0; i < m_BVH.size(); i++) {
-		if (m_BVH[i].hasVerts()) {
-			
-			bvhData[added] = BVH();
-			bvhData[added].min[0] = m_BVH[i].min[0];
-			bvhData[added].min[1] = m_BVH[i].min[1];
-			bvhData[added].min[2] = m_BVH[i].min[2];
 
-			bvhData[added].max[0] = m_BVH[i].max[0];
-			bvhData[added].max[1] = m_BVH[i].max[1];
-			bvhData[added].max[2] = m_BVH[i].max[2];
+		int totalAdded = putBVH(bvhData, &m_BVH[i], vertData, numVerts, added, 1);
 
-			std::cout << "BVH->max(" << bvhData[added].max[0] << "," << bvhData[added].max[1] << "," << bvhData[added].max[2] << ")" << std::endl;
-			std::cout << "BVH->min(" << bvhData[added].min[0] << "," << bvhData[added].min[1] << "," << bvhData[added].min[2] << ")" << std::endl;
-
-			int numTrisToAdd = m_BVH[i].triIdx.size();
-
-			std::cout << "Tris to add:" << numTrisToAdd << std::endl;
-
-			if (numTrisToAdd > BVH_CHUNK_SIZE) throw new std::exception("Tried to add too many tris to BVH box");
-
-			bvhData[added].numTris = numTrisToAdd;
-
-			for (int t = 0; t < numTrisToAdd; t++) {
-				std::cout << "Adding " << t << "=" << m_BVH[i].triIdx[t] << std::endl;
-				bvhData[added].triIdx[t] = m_BVH[i].triIdx[t];
-			}
-
-			added++;
+		//store the next octree location (only at depth==1 and not last octree!)
+		if (totalAdded > 0) {
+			octree++;
+			bvhData[added].nextOctree = added + totalAdded;
 		}
+		lastAdded = added;
+		added += totalAdded;
+
 	}
+
+	//the last added octree has no next octree (and cannot easily determine where it will be in m_BVH)
+	bvhData[lastAdded].nextOctree = -1;
 
 	if (added > numBVH) throw new std::exception("Tried to add more BVH than expected");
 
+	return octree;
 }
 
 
@@ -930,3 +1123,179 @@ int OBJLoader::lookupMaterial(char *matName)
 	}
 	return -1;
 }
+
+/////////////////////////////////////////////////////////////////////////////
+//TRI BOX OVERLAP CODE ADAPTED FROM
+//http://fileadmin.cs.lth.se/cs/Personal/Tomas_Akenine-Moller/code/
+/////////////////////////////////////////////////////////////////////////////
+
+bool OBJLoader::planeBoxOverlap(vec3 &normal, vec3 &vert, vec3 &maxbox)
+{
+
+	int q;
+	vec3 vmin, vmax;
+	float v;
+	for (q = 0; q <= 2; q++)
+	{
+		v = vert[q];
+		if (normal[q] > 0.0f)
+		{
+
+			vmin[q] = -maxbox[q] - v;
+			vmax[q] = maxbox[q] - v;
+		}
+		else
+		{
+			vmin[q] = maxbox[q] - v;
+			vmax[q] = -maxbox[q] - v;
+		}
+	}
+
+	if (dot2(normal, vmin) > 0.0f) return false;
+	if (dot2(normal, vmax) >= 0.0f) return true;
+	return false;
+
+}
+
+
+bool OBJLoader::SEPAXIS_X01(float a, float b, float fa, float fb, vec3 &v0, vec3 &v2, vec3 &boxhalfsize) {
+	float min1, max1 = 0.0f;
+	float p0 = a * v0[1] - b * v0[2];
+	float p2 = a * v2[1] - b * v2[2];
+	if (p0 < p2) { min1 = p0; max1 = p2; }
+	else { min1 = p2; max1 = p0; }
+	float rad = fa * boxhalfsize[1] + fb * boxhalfsize[2];
+	return (min1 > rad || max1 < -rad);
+}
+bool OBJLoader::SEPAXIS_X2(float a, float b, float fa, float fb, vec3 &v0, vec3 &v1, vec3 &boxhalfsize) {
+	float min1, max1 = 0.0f;
+	float p0 = a * v0[1] - b * v0[2];
+	float p1 = a * v1[1] - b * v1[2];
+	if (p0 < p1) { min1 = p0; max1 = p1; }
+	else { min1 = p1; max1 = p0; }
+	float rad = fa * boxhalfsize[1] + fb * boxhalfsize[2];
+	return (min1 > rad || max1 < -rad);
+}
+bool OBJLoader::SEPAXIS_Y02(float a, float b, float fa, float fb, vec3 &v0, vec3 &v2, vec3 &boxhalfsize) {
+	float min1, max1 = 0.0f;
+	float p0 = -a * v0[0] + b * v0[2];
+	float p2 = -a * v2[0] + b * v2[2];
+	if (p0 < p2) { min1 = p0; max1 = p2; }
+	else { min1 = p2; max1 = p0; }
+	float rad = fa * boxhalfsize[0] + fb * boxhalfsize[2];
+	return (min1 > rad || max1 < -rad);
+}
+bool OBJLoader::SEPAXIS_Y1(float a, float b, float fa, float fb, vec3 &v0, vec3 &v1, vec3 &boxhalfsize) {
+	float min1, max1 = 0.0f;
+	float p0 = -a * v0[0] + b * v0[2];
+	float p1 = -a * v1[0] + b * v1[2];
+	if (p0 < p1) { min1 = p0; max1 = p1; }
+	else { min1 = p1; max1 = p0; }
+	float rad = fa * boxhalfsize[0] + fb * boxhalfsize[2];
+	return (min1 > rad || max1 < -rad);
+}
+bool OBJLoader::SEPAXIS_Z12(float a, float b, float fa, float fb, vec3 &v1, vec3 &v2, vec3 &boxhalfsize) {
+	float min1, max1 = 0.0f;
+	float p1 = a * v1[0] - b * v1[1];
+	float p2 = a * v2[0] - b * v2[1];
+	if (p2 < p1) { min1 = p2; max1 = p1; }
+	else { min1 = p1; max1 = p2; }
+	float rad = fa * boxhalfsize[0] + fb * boxhalfsize[1];
+	return (min1 > rad || max1 < -rad);
+}
+bool OBJLoader::SEPAXIS_Z0(float a, float b, float fa, float fb, vec3 &v0, vec3 &v1, vec3 &boxhalfsize) {
+	float min1, max1 = 0.0f;
+	float p0 = a * v0[0] - b * v0[1];
+	float p1 = a * v1[0] - b * v1[1];
+	if (p0 < p1) { min1 = p0; max1 = p1; }
+	else { min1 = p1; max1 = p0; }
+	float rad = fa * boxhalfsize[0] + fb * boxhalfsize[1];
+	return (min1 > rad || max1 < -rad);
+}
+
+
+bool OBJLoader::triBoxOverlap(vec3 &boxcenter, vec3 &boxhalfsize, vec4 &vert1, vec4 &vert2, vec4 &vert3, vec3 &normal)
+{
+
+	//verts relative to box
+	vec3 v0 = { 0 };
+	v0[0] = vert1[0] - boxcenter[0];
+	v0[1] = vert1[1] - boxcenter[1];
+	v0[2] = vert1[2] - boxcenter[2];
+	vec3 v1 = { 0 };
+	v1[0] = vert2[0] - boxcenter[0];
+	v1[1] = vert2[1] - boxcenter[1];
+	v1[2] = vert2[2] - boxcenter[2];
+	vec3 v2 = { 0 };
+	v2[0] = vert3[0] - boxcenter[0];
+	v2[1] = vert3[1] - boxcenter[1];
+	v2[2] = vert3[2] - boxcenter[2];
+
+	//edges
+	vec3 e0 = { 0 };
+	e0[0] = v1[0] - v0[0];
+	e0[1] = v1[1] - v0[1];
+	e0[2] = v1[2] - v0[2];
+	vec3 e1 = { 0 };
+	e1[0] = v2[0] - v1[0];
+	e1[1] = v2[1] - v1[1];
+	e1[2] = v2[2] - v1[2];
+	vec3 e2 = { 0 };
+	e2[0] = v0[0] - v2[0];
+	e2[1] = v0[1] - v2[1];
+	e2[2] = v0[2] - v2[2];
+
+	//these 9 tests first is "faster"
+	float fex = abs(e0[0]);
+	float fey = abs(e0[1]);
+	float fez = abs(e0[2]);
+	if (SEPAXIS_X01(e0[2], e0[1], fez, fey, v0, v2, boxhalfsize)
+		|| SEPAXIS_Y02(e0[2], e0[0], fez, fex, v0, v2, boxhalfsize)
+		|| SEPAXIS_Z12(e0[1], e0[0], fey, fex, v1, v2, boxhalfsize)) return false;
+
+	fex = abs(e1[0]);
+	fey = abs(e1[1]);
+	fez = abs(e1[2]);
+	if (SEPAXIS_X01(e1[2], e1[1], fez, fey, v0, v2, boxhalfsize)
+		|| SEPAXIS_Y02(e1[2], e1[0], fez, fex, v0, v2, boxhalfsize)
+		|| SEPAXIS_Z0(e1[1], e1[0], fey, fex, v0, v1, boxhalfsize)) return false;
+
+	fex = abs(e2[0]);
+	fey = abs(e2[1]);
+	fez = abs(e2[2]);
+	if (SEPAXIS_X2(e2[2], e2[1], fez, fey, v0, v1, boxhalfsize)
+		|| SEPAXIS_Y1(e2[2], e2[0], fez, fex, v0, v1, boxhalfsize)
+		|| SEPAXIS_Z12(e2[1], e2[0], fey, fex, v1, v2, boxhalfsize)) return false;
+
+
+	//first test overlap in the {x,y,z}-directions
+	//find min, max of the triangle each direction, and test for overlap in
+	//that direction -- this is equivalent to testing a minimal AABB around
+	//the triangle against the AABB
+
+	//In X direction
+	float min1 = min(v0[0], min(v1[0], v2[0]));
+	float max1 = max(v0[0], max(v1[0], v2[0]));
+	if (min1 > boxhalfsize[0] || max1 < -boxhalfsize[0]) return false;
+
+	//In Y direction
+	min1 = min(v0[1], min(v1[1], v2[1]));
+	max1 = max(v0[1], max(v1[1], v2[1]));
+	if (min1 > boxhalfsize[1] || max1 < -boxhalfsize[1]) return false;
+
+	//In Z direction
+	min1 = min(v0[2], min(v1[2], v2[2]));
+	max1 = max(v0[2], max(v1[2], v2[2]));
+	if (min1 > boxhalfsize[2] || max1 < -boxhalfsize[2]) return false;
+
+	//test if the box intersects the plane of the triangle
+	//compute plane equation of triangle: normal*x+d=0
+
+	//vec3 normal = cross(e0,e1);
+
+	if (!planeBoxOverlap(normal, v0, boxhalfsize)) return false;
+
+	return true;   //overlap!
+}
+
+

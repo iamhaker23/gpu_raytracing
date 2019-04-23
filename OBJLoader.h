@@ -7,6 +7,9 @@
 #include <fstream>
 #include <string>
 #include <algorithm>
+#include <cmath>
+
+#define MAX_BVH_DEPTH 2
 
 struct ObjMat
 {
@@ -73,16 +76,20 @@ struct vector3d {
 
 };
 
+
 class OBJLoader {
 
 public:
 	
 	static int loadRawVertexList(const char * fileName, Vertex** vertData);
 	static void loadVertices(Vertex* vertData, int numVerts);
-	static int countBVHNeeded(Vertex* vertData, int numVerts, BVH** bvhData);
-	static void createBVH(BVH* bvhData, int numBVH, Vertex* vertData, int numVerts);
+	static int countBVHNeeded(Vertex* vertData, int numVerts);
+	static int createBVH(BVH* bvhData, int numBVH, Vertex* vertData, int numVerts);
 
 private:
+	
+	static int putBVH(BVH* bvhData, BVH_BAKE* bvh, Vertex* vertData, int numVerts, int added, int depth);
+	static int putVertsInBVH(Vertex* vertData, int numVerts, BVH_BAKE* bvh, int depth);
 
 	static void readTriangleFaceVertTexNorm(char *line, int matId);
 	static void readFaceLine(FILE * theFile, int matId);
@@ -90,6 +97,7 @@ private:
 	static bool myMTLLoader(const char *mainName, const char *filename);
 	static int lookupMaterial(char *matName);
 	static void splitFrontString(char * inputString, char * frontString, char * restString, int size);
+	static bool doesTriIntersectBox(vec4 &verta, vec4 &vertb, vec4 &vertc, BVH_BAKE* bvh);
 
 	static std::vector<BVH_BAKE> m_BVH;
 
@@ -102,5 +110,19 @@ private:
 	//an STL vector for the faces
 	static std::vector<SObjFace> m_vFaces;
 	static std::vector<ObjMat> theMats;
+
+
+	/////////////////////////////////////////////////////////////////////////////
+	//TRI BOX OVERLAP CODE ADAPTED FROM
+	//http://fileadmin.cs.lth.se/cs/Personal/Tomas_Akenine-Moller/code/
+	/////////////////////////////////////////////////////////////////////////////
+	static bool planeBoxOverlap(vec3 &normal, vec3 &vert, vec3 &maxbox);
+	static bool SEPAXIS_X01(float a, float b, float fa, float fb, vec3 &v0, vec3 &v2, vec3 &boxhalfsize);
+	static bool SEPAXIS_X2(float a, float b, float fa, float fb, vec3 &v0, vec3 &v1, vec3 &boxhalfsize);
+	static bool SEPAXIS_Y02(float a, float b, float fa, float fb, vec3 &v0, vec3 &v2, vec3 &boxhalfsize);
+	static bool SEPAXIS_Y1(float a, float b, float fa, float fb, vec3 &v0, vec3 &v1, vec3 &boxhalfsize);
+	static bool SEPAXIS_Z12(float a, float b, float fa, float fb, vec3 &v1, vec3 &v2, vec3 &boxhalfsize);
+	static bool SEPAXIS_Z0(float a, float b, float fa, float fb, vec3 &v0, vec3 &v1, vec3 &boxhalfsize);
+	static bool triBoxOverlap(vec3 &boxcenter, vec3 &boxhalfsize, vec4 &vert1, vec4 &vert2, vec4 &vert3, vec3 &normal);
 
 };

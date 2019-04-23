@@ -71,7 +71,7 @@
 #define WIDTH 1024
 #define HEIGHT 1024
 #define SHAPE_MODE 0
-#define BVH_DEBUG_VISUALISATION 1
+#define BVH_DEBUG_VISUALISATION 0
 #define CULLING 1
 
  //NOTE: only support power-of-two DRSD values (for maximising GPU utilisation)
@@ -654,6 +654,7 @@ __device__ void intersectTris(int* vertIdx, Vertex* verts, IntersectionResult* o
 	*/
 }
 
+template<int depth>
 __device__ void intersectBVH(BVH* bvh
 	, int numBoxes
 	, Vertex* verts
@@ -663,22 +664,24 @@ __device__ void intersectBVH(BVH* bvh
 	, float orig_x, float orig_y, float orig_z
 	, float ray_x, float ray_y, float ray_z
 	, float maxDist) {
-
-	outhit->pos[0] = 0;
-	outhit->pos[1] = 0;
-	outhit->pos[2] = 0;
-	outhit->col[0] = 0;
-	outhit->col[1] = 0;
-	outhit->col[2] = 0;
-	outhit->normal[0] = 0;
-	outhit->normal[1] = 0;
-	outhit->normal[2] = 0;
-	outhit->triIndex = -1;
-	outhit->faceDir = 0; 
-	outhit->tmin = -1;
-	outhit->uv[0] = 0;
-	outhit->uv[1] = 0;
 	
+	if (depth == 1) {
+		outhit->pos[0] = 0;
+		outhit->pos[1] = 0;
+		outhit->pos[2] = 0;
+		outhit->col[0] = 0;
+		outhit->col[1] = 0;
+		outhit->col[2] = 0;
+		outhit->normal[0] = 0;
+		outhit->normal[1] = 0;
+		outhit->normal[2] = 0;
+		outhit->triIndex = -1;
+		outhit->faceDir = 0;
+		outhit->tmin = -1;
+		outhit->uv[0] = 0;
+		outhit->uv[1] = 0;
+	}
+
 	vec3 raydir = { 0 };
 	raydir[0] = ray_x;
 	raydir[1] = ray_y;
@@ -690,36 +693,127 @@ __device__ void intersectBVH(BVH* bvh
 
 	float minT = 99999.9f;
 
+	int nextOctree = -1;
 	//backwards because the octree is biased in the negative direction
-	//TODO: this would cause Z-depth failures when facing the other direction!
-	for (int i = numBoxes-1; i >= 0; i--) {
+	//TODO: this would cause depth failures when facing the other direction!
+	for (int i = 0; i <= numBoxes-1; i++) {
+
+		//PROBLEM: where are the root octrees? Sparsely populated...
+		//TRY: next octree in each BVH
+		//NOTE: ensures currentOctree==i when depth>1
+		//NOTE2: must use nextOctree regardless of level!
+		
+		int currentOctree = -1;
+		if (depth == 1) {
+			currentOctree = (nextOctree == -1) ? i : nextOctree;
+			if (currentOctree == -1) return;
+			nextOctree = bvh[currentOctree].nextOctree;
+		}
+		else {
+			currentOctree = bvh->children[i];
+			if (currentOctree == -1) continue;
+		}
+
+		//for each root octree
+		//recurse until hit at lowest level hit
+		//Parent -> 
+		//child1 -> grandchildren -> ... 
+		//child2 -> grandchildren -> ...
+		// ...
+		//child8 -> grandchildren -> ...
 
 		vec3 t0s = { 0 };
-		t0s[0] = ((bvh[i].min[0] - (orig_x)) * (raydir[0]));
-		t0s[1] = ((bvh[i].min[1] - (orig_y)) * (raydir[1]));
-		t0s[2] = ((bvh[i].min[2] - (orig_z)) * (raydir[2]));
+		t0s[0] = ((bvh[currentOctree].min[0] - (orig_x)) * (raydir[0]));
+		t0s[1] = ((bvh[currentOctree].min[1] - (orig_y)) * (raydir[1]));
+		t0s[2] = ((bvh[currentOctree].min[2] - (orig_z)) * (raydir[2]));
 
 		vec3 t1s = { 0 };
-		t1s[0] = ((bvh[i].max[0] - (orig_x)) * (raydir[0]));
-		t1s[1] = ((bvh[i].max[1] - (orig_y)) * (raydir[1]));
-		t1s[2] = ((bvh[i].max[2] - (orig_z)) * (raydir[2]));
+		t1s[0] = ((bvh[currentOctree].max[0] - (orig_x)) * (raydir[0]));
+		t1s[1] = ((bvh[currentOctree].max[1] - (orig_y)) * (raydir[1]));
+		t1s[2] = ((bvh[currentOctree].max[2] - (orig_z)) * (raydir[2]));
 
-		/*
-		vec3 tsmaller = { 0 };
-		vec3 tbigger = { 0 };
+		float tmin = max(min(t0s[0], t1s[0]), max(min(t0s[1], t1s[1]), min(t0s[2], t1s[2])));
+		float tmax = min(max(t0s[0], t1s[0]), min(max(t0s[1], t1s[1]), max(t0s[2], t1s[2])));
 
-		tsmaller[0] = min(t0s[0], t1s[0]);
-		tbigger[0] = max(t0s[0], t1s[0]);
+		if (tmin < tmax) {
 
-		tsmaller[1] = min(t0s[1], t1s[1]);
-		tbigger[1] = max(t0s[1], t1s[1]);
+			//iterate children
+			intersectBVH<depth + 1>(&bvh[currentOctree]
+				, 8
+				, verts
+				, outhit
+				, factor
+				, numTris
+				, orig_x, orig_y, orig_z
+				, ray_x, ray_y, ray_z
+				, maxDist);
 
-		tsmaller[2] = min(t0s[2], t1s[2]);
-		tbigger[2] = max(t0s[2], t1s[2]);
+			//if (outhit->triIndex != -1) return;
 
-		float tmin = max(tsmaller[0], max(tsmaller[1], tsmaller[2]));
-		float tmax = min(tbigger[0], min(tbigger[1], tbigger[2]));
-		*/
+		}
+	}
+}
+
+template<>
+__device__ void intersectBVH<MAX_BVH_DEPTH>(BVH* bvh
+	, int numBoxes
+	, Vertex* verts
+	, IntersectionResult* outhit
+	, float factor
+	, int numTris
+	, float orig_x, float orig_y, float orig_z
+	, float ray_x, float ray_y, float ray_z
+	, float maxDist) {
+
+	vec3 raydir = { 0 };
+	raydir[0] = ray_x;
+	raydir[1] = ray_y;
+	raydir[2] = ray_z;
+	float raydirmag = magnitude(raydir);
+	raydir[0] = 1.0f / raydir[0];
+	raydir[1] = 1.0f / raydir[1];
+	raydir[2] = 1.0f / raydir[2];
+
+	float minT = 99999.9f;
+
+	int nextOctree = -1;
+	//backwards because the octree is biased in the negative direction
+	//TODO: this would cause depth failures when facing the other direction!
+	for (int i = 0; i <= numBoxes - 1; i++) {
+
+		//PROBLEM: where are the root octrees? Sparsely populated...
+		//TRY: next octree in each BVH
+		//NOTE: ensures currentOctree==i when depth>1
+		//NOTE2: must use nextOctree regardless of level!
+
+		int currentOctree = -1;
+		if (MAX_BVH_DEPTH == 1) {
+			currentOctree = (nextOctree == -1) ? i : nextOctree;
+			if (currentOctree == -1) return;
+			nextOctree = bvh[currentOctree].nextOctree;
+		}
+		else {
+			currentOctree = bvh->children[i];
+			if (currentOctree == -1) continue;
+		}
+
+		//for each root octree
+		//recurse until hit at lowest level hit
+		//Parent -> 
+		//child1 -> grandchildren -> ... 
+		//child2 -> grandchildren -> ...
+		// ...
+		//child8 -> grandchildren -> ...
+
+		vec3 t0s = { 0 };
+		t0s[0] = ((bvh[currentOctree].min[0] - (orig_x)) * (raydir[0]));
+		t0s[1] = ((bvh[currentOctree].min[1] - (orig_y)) * (raydir[1]));
+		t0s[2] = ((bvh[currentOctree].min[2] - (orig_z)) * (raydir[2]));
+
+		vec3 t1s = { 0 };
+		t1s[0] = ((bvh[currentOctree].max[0] - (orig_x)) * (raydir[0]));
+		t1s[1] = ((bvh[currentOctree].max[1] - (orig_y)) * (raydir[1]));
+		t1s[2] = ((bvh[currentOctree].max[2] - (orig_z)) * (raydir[2]));
 
 		float tmin = max(min(t0s[0], t1s[0]), max(min(t0s[1], t1s[1]), min(t0s[2], t1s[2])));
 		float tmax = min(max(t0s[0], t1s[0]), min(max(t0s[1], t1s[1]), max(t0s[2], t1s[2])));
@@ -727,24 +821,23 @@ __device__ void intersectBVH(BVH* bvh
 		if (tmin < tmax) {
 
 			//debug the BVH
-			if (BVH_DEBUG_VISUALISATION == 1) {
-				outhit->col[0] = 1;
-				outhit->col[1] = 1;
-				outhit->col[2] = 0;
-			}
-
+#if BVH_DEBUG_VISUALISATION == 1
+			outhit->col[0] = 1;
+			outhit->col[1] = 1;
+			outhit->col[2] = 0;
+#else		
 			//check triangles for any hit BVH
 			//Can't ignore further BVH boxes in case of a BVH hit but Tri miss
 			intersectTris(
-				bvh[i].triIdx
+				bvh[currentOctree].triIdx
 				, verts
 				, outhit
 				, factor
-				, bvh[i].numTris
+				, bvh[currentOctree].numTris
 				, orig_x, orig_y, orig_z
 				, ray_x, ray_y, ray_z
 				, maxDist);
-
+#endif
 			//Can do this when BVH are sorted (e.g. first hit is certain to be front-most
 			//if (outhit->triIndex >= 0) return;
 		}
@@ -770,14 +863,15 @@ __device__ void RaytraceTris(
 {
 	
 	//intersectTris(1, verts, hitlist, factor, numTris, orig_x, orig_y, orig_z, ray_x, ray_y, ray_z, -1.0f);
-	intersectBVH(bvh, numBVH, verts, hitlist, factor, numTris, orig_x, orig_y, orig_z, ray_x, ray_y, ray_z, -1.0f);
+	intersectBVH<1>(bvh, numBVH, verts, hitlist, factor, numTris, orig_x, orig_y, orig_z, ray_x, ray_y, ray_z, -1.0f);
 
 	int tri = hitlist->triIndex;
 	bool inside = (hitlist->faceDir == -1) ? 1 : 0;
 
 	if (tri < 0) {
 		//miss - background colour (or intersection debug color)
-		//if (hitlist->col[0] + hitlist->col[1] + hitlist->col[2] == 0) {
+		if (hitlist->col[0] + hitlist->col[1] + hitlist->col[2] == 0) {
+			
 			//blendCol(col, factor, 150, 160, 200);
 
 			float4 bgTex = tex2D(cudaTex3, (ray_x +(WIDTH/2))/WIDTH, (ray_y + (HEIGHT / 2)) / HEIGHT);
@@ -787,11 +881,10 @@ __device__ void RaytraceTris(
 				, 255 * bgTex.y
 				, 255 * bgTex.z
 			);
-
-		//}
-		//else {
-		//	blendCol(col, factor, 255*hitlist->col[0], 255 * hitlist->col[1], 255 * hitlist->col[2]);
-		//}
+		}
+		else {
+			blendCol(col, factor, 255*hitlist->col[0], 255 * hitlist->col[1], 255 * hitlist->col[2]);
+		}
 	}
 	else {
 
@@ -891,7 +984,7 @@ __device__ void RaytraceTris(
 		nnnhit[1] = -nnhit[1];
 		nnnhit[2] = -nnhit[2];
 
-		intersectBVH(bvh, numBVH, verts, hitlist, factor, numTris
+		intersectBVH<1>(bvh, numBVH, verts, hitlist, factor, numTris
 			, hitPos[0] + nnhit[0] * 1e-2
 			, hitPos[1] + nnhit[1] * 1e-2
 			, hitPos[2] + nnhit[2] * 1e-2
@@ -1649,6 +1742,7 @@ const int NUM_SPHERES = 6;
 
 int NUM_TRIS = 0;
 int NUM_BVH = 0;
+int NUM_OCTREE = 0;
 
 const int NUM_LIGHTS = 2;
 
@@ -3139,12 +3233,13 @@ private:
 		vertData = (Vertex*)malloc(numVerts * sizeof(Vertex));
 		OBJLoader::loadVertices(vertData, numVerts);
 
-		int numBVH = OBJLoader::countBVHNeeded(vertData, numVerts, &bvhData);
+		int numBVH = OBJLoader::countBVHNeeded(vertData, numVerts);
 		bvhData = (BVH*)malloc(numBVH * sizeof(BVH));
-		OBJLoader::createBVH(bvhData, numBVH, vertData, numVerts);
+		int numOctree = OBJLoader::createBVH(bvhData, numBVH, vertData, numVerts);
 
 		NUM_TRIS = numVerts / 3;
 		NUM_BVH = numBVH;
+		NUM_OCTREE = numOctree;
 
 		//Transfer vert data to GPU
 		checkCudaErrors(cudaMallocManaged((void**)&cudaVerts, numVerts * sizeof(Vertex), cudaMemAttachGlobal));
@@ -4276,7 +4371,7 @@ private:
 			get_raytraced_pixels << <grid, block, 0, streamToRun >> > (
 				pixelData
 				, (BVH*)cudaBVH
-				, NUM_BVH
+				, NUM_OCTREE
 				, (Vertex*)cudaVerts
 				, NUM_TRIS
 				, (Sphere*)cudaSpheres
