@@ -218,94 +218,6 @@ void OBJLoader::loadVertices(Vertex* vertData, int numVerts) {
 	}
 }
 
-
-bool OBJLoader::doesTriIntersectBox(vec4 &verta, vec4 &vertb, vec4 &vertc, BVH_BAKE* bvh) {
-
-	vec3 raydir = { 0 };
-	raydir[0] = vertb[0] - verta[0];
-	raydir[1] = vertb[1] - verta[1];
-	raydir[2] = vertb[2] - verta[2];
-	float raydirmag = sqrtf(raydir[0] * raydir[0] + raydir[1] * raydir[1] + raydir[2] * raydir[2]);
-	raydir[0] = 1.0f / raydir[0];
-	raydir[1] = 1.0f / raydir[1];
-	raydir[2] = 1.0f / raydir[2];
-
-	vec3 t0s = { 0 };
-	t0s[0] = ((bvh->min[0] - (verta[0])) * (raydir[0]));
-	t0s[1] = ((bvh->min[1] - (verta[1])) * (raydir[1]));
-	t0s[2] = ((bvh->min[2] - (verta[2])) * (raydir[2]));
-
-	vec3 t1s = { 0 };
-	t1s[0] = ((bvh->max[0] - (verta[0])) * (raydir[0]));
-	t1s[1] = ((bvh->max[1] - (verta[1])) * (raydir[1]));
-	t1s[2] = ((bvh->max[2] - (verta[2])) * (raydir[2]));
-
-	float tmin = max(min(t0s[0], t1s[0]), max(min(t0s[1], t1s[1]), min(t0s[2], t1s[2])));
-	float tmax = min(max(t0s[0], t1s[0]), min(max(t0s[1], t1s[1]), max(t0s[2], t1s[2])));
-
-	if (tmin > 0 && tmin < 1 && tmin < tmax) {
-		//hit
-
-		return true;
-
-	}
-	else {
-
-		raydir[0] = vertb[0] - vertc[0];
-		raydir[1] = vertb[1] - vertc[1];
-		raydir[2] = vertb[2] - vertc[2];
-		//float raydirmag = sqrtf(raydir[0] * raydir[0] + raydir[1] * raydir[1] + raydir[2] * raydir[2]);
-		raydir[0] = 1.0f / raydir[0];
-		raydir[1] = 1.0f / raydir[1];
-		raydir[2] = 1.0f / raydir[2];
-
-		t0s[0] = ((bvh->min[0] - (vertc[0])) * (raydir[0]));
-		t0s[1] = ((bvh->min[1] - (vertc[1])) * (raydir[1]));
-		t0s[2] = ((bvh->min[2] - (vertc[2])) * (raydir[2]));
-
-		t1s[0] = ((bvh->max[0] - (vertc[0])) * (raydir[0]));
-		t1s[1] = ((bvh->max[1] - (vertc[1])) * (raydir[1]));
-		t1s[2] = ((bvh->max[2] - (vertc[2])) * (raydir[2]));
-
-		float tmin = max(min(t0s[0], t1s[0]), max(min(t0s[1], t1s[1]), min(t0s[2], t1s[2])));
-		float tmax = min(max(t0s[0], t1s[0]), min(max(t0s[1], t1s[1]), max(t0s[2], t1s[2])));
-		
-		if (tmin > 0 && tmin < 1 && tmin < tmax) {
-			//hit
-			return true;
-		}
-		else {
-
-			raydir[0] = verta[0] - vertc[0];
-			raydir[1] = verta[1] - vertc[1];
-			raydir[2] = verta[2] - vertc[2];
-			//float raydirmag = sqrtf(raydir[0] * raydir[0] + raydir[1] * raydir[1] + raydir[2] * raydir[2]);
-			raydir[0] = 1.0f / raydir[0];
-			raydir[1] = 1.0f / raydir[1];
-			raydir[2] = 1.0f / raydir[2];
-
-			t0s[0] = ((bvh->min[0] - (vertc[0])) * (raydir[0]));
-			t0s[1] = ((bvh->min[1] - (vertc[1])) * (raydir[1]));
-			t0s[2] = ((bvh->min[2] - (vertc[2])) * (raydir[2]));
-
-			t1s[0] = ((bvh->max[0] - (vertc[0])) * (raydir[0]));
-			t1s[1] = ((bvh->max[1] - (vertc[1])) * (raydir[1]));
-			t1s[2] = ((bvh->max[2] - (vertc[2])) * (raydir[2]));
-
-			float tmin = max(min(t0s[0], t1s[0]), max(min(t0s[1], t1s[1]), min(t0s[2], t1s[2])));
-			float tmax = min(max(t0s[0], t1s[0]), min(max(t0s[1], t1s[1]), max(t0s[2], t1s[2])));
-
-			if (tmin > 0 && tmin < 1 && tmin < tmax) {
-				//hit
-				return true;
-			}
-		}
-	}
-
-	return false;
-
-}
-
 int OBJLoader::putVertsInBVH(Vertex* vertData, int numVerts, BVH_BAKE* bvh, int depth){
 
 	int currentRedirect = -1;
@@ -357,13 +269,10 @@ int OBJLoader::putVertsInBVH(Vertex* vertData, int numVerts, BVH_BAKE* bvh, int 
 		bool containsPartTri = containsV1 || containsV2 || containsV3;
 		bool containsWholeTri = containsV1 && containsV2 && containsV3;
 
-		//bool triIntersects = (containsPartTri) ? false : doesTriIntersectBox(vertData[tri + 0].pos, vertData[tri + 1].pos, vertData[tri + 2].pos, bvh);
-
-		
-
+		bool triIntersects = false;
 #if NO_LOSS_BVH == 1
 		//triangle might intersect bvh but is so big that no verts are actually within the bvh!
-		bool triIntersects = false;
+		
 
 		if (!containsPartTri) {
 			vec3 boxhalfsize = { 0 };
@@ -377,11 +286,8 @@ int OBJLoader::putVertsInBVH(Vertex* vertData, int numVerts, BVH_BAKE* bvh, int 
 
 			triIntersects = triBoxOverlap(boxcenter, boxhalfsize, vertData[tri + 0].pos, vertData[tri + 1].pos, vertData[tri + 2].pos, vertData[tri + 0].normal);
 		}
-
-		if (containsPartTri || triIntersects) {
-#else
-		if (containsPartTri) {
 #endif
+		if (containsPartTri || triIntersects) {
 			bool addedAlready = false;
 
 			//Allow adding multiple times!!!
@@ -519,7 +425,10 @@ int OBJLoader::countBVHNeeded(Vertex* vertData, int numVerts) {
 	
 	//TODO: finetune -> large impact on octree balance and thus performance
 	//float bvhBoxDim = (BVH_BOX_SIZE > maxSpan) ? BVH_BOX_SIZE : maxSpan / 5;
-	float bvhBoxDim = maxSpan / 4;
+	//float bvhBoxDim = maxSpan / 4;
+
+	//cornell tune
+	float bvhBoxDim = 2048;
 
 	std::cout << "SPAN:" << bvhBoxDim << std::endl;
 

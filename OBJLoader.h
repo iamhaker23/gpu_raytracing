@@ -97,7 +97,6 @@ private:
 	static bool myMTLLoader(const char *mainName, const char *filename);
 	static int lookupMaterial(char *matName);
 	static void splitFrontString(char * inputString, char * frontString, char * restString, int size);
-	static bool doesTriIntersectBox(vec4 &verta, vec4 &vertb, vec4 &vertc, BVH_BAKE* bvh);
 
 	static std::vector<BVH_BAKE> m_BVH;
 
