@@ -73,6 +73,9 @@
 #define SHAPE_MODE 0
 #define BVH_DEBUG_VISUALISATION 0
 #define CULLING 1
+//slower visual presentation when CPU prints with cout (but the frames are still rendered by CUDA as fast)
+#define PRINT_FPS 1
+#define NORMAL_MAPPING 1
 
  //NOTE: only support power-of-two DRSD values (for maximising GPU utilisation)
 //#define DEFERRED_REFRESH_SQUARE_DIM 1
@@ -924,7 +927,8 @@ __device__ void RaytraceTris(
 		toLight[1] = toLight[1] / distToLight;
 		toLight[2] = toLight[2] / distToLight;
 
-		
+
+#if NORMAL_MAPPING == 1
 		//tangent space normal (i.e. oriented to triangle)
 		float normalIntensity = 0.3f;
 		vec3 nnhitTang = { 0 };
@@ -950,7 +954,7 @@ __device__ void RaytraceTris(
 		nnhit[0] /= nh2;
 		nnhit[1] /= nh2;
 		nnhit[2] /= nh2;
-		
+#endif
 		//use normal map value directly
 		//nnhit[0] = nnhitTang[0];
 		//nnhit[1] = nnhitTang[1];
@@ -1935,6 +1939,9 @@ private:
 
 	VkBuffer stagingBuffer;
 	VkDeviceMemory stagingBufferMemory;
+
+
+	cudaEvent_t start, stop;
 
 	stbi_uc* pixels;
 	stbi_uc* texture1;
@@ -2947,6 +2954,9 @@ private:
 	void cudaInitVertexMem() {
 		checkCudaErrors(cudaStreamCreate(&streamToRun));
 
+		checkCudaErrors(cudaEventCreate(&start));
+		checkCudaErrors(cudaEventCreate(&stop));
+
 #if SHAPE_MODE == 1
 		vec3 c, sc, ec;
 		c[0] = -400.0f; c[1] = 0.0f; c[2] = -6500.0f;
@@ -3692,7 +3702,8 @@ private:
 		//std::ratio<1, 100> gives 50fps
 		//std::ratio<1, 60> gives 30fps
 		//std::ratio<1, 70> gives 35fps
-		int ticks = (int)(std::chrono::duration<float, std::ratio<1, 60>>(cNow - WIN_CTIME).count());
+		//Affects screen refresh and CUDA work
+		int ticks = (int)(std::chrono::duration<float, std::ratio<1, 120>>(cNow - WIN_CTIME).count());
 
 		if (((ticks % 2 == 1) && ticks != oldTicks)) {
 			WIN_CTIME = cNow;
@@ -4363,9 +4374,13 @@ private:
 
 		//TODO: will not update when spheres changed, i.e. when data asynchronously uploaded with cudaMemcpyAsync()
 		if (framesRefreshRequired != 0) {
-
+			
 			//make sure to complete the "deferred refresh" cycle in the event of freezeframe, i.e. when no changes to render
 			framesRefreshRequired--;
+
+#if PRINT_FPS == 1
+			cudaEventRecord(start);
+#endif
 
 			get_raytraced_pixels << <grid, block, 0, streamToRun >> > (
 				pixelData
@@ -4382,6 +4397,15 @@ private:
 				, 1.0f
 				, light_mode
 				,(IntersectionResult*)cudaHitList);
+
+#if PRINT_FPS == 1
+			cudaEventRecord(stop);
+			//blocks CPU till event is recorded
+			cudaEventSynchronize(stop);
+			float milliseconds = 0;
+			cudaEventElapsedTime(&milliseconds, start, stop);
+			std::cout << milliseconds << "ms frame." << std::endl;
+#endif
 
 			//keep count of what sub-frame is being rendered
 			if (frameStep != 0) {
@@ -4407,6 +4431,14 @@ private:
 			cudaDestroyExternalSemaphore(cudaExtVkUpdateCudaVertexBufSemaphore));
 		vkDestroySemaphore(device, vkUpdateCudaVertexBufSemaphore, nullptr);
 
+
+
+		checkCudaErrors(
+		cudaEventDestroy(start)
+		);
+		checkCudaErrors(
+		cudaEventDestroy(stop)
+		);
 
 		//TODO: Error 30!! Out of bounds memory access? Closes fine without these "frees"
 		//wait for async copy, etc. to finish before erasing the device buffer(s)
