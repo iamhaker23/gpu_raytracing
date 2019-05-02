@@ -273,7 +273,6 @@ int OBJLoader::putVertsInBVH(Vertex* vertData, int numVerts, BVH_BAKE* bvh, int 
 #if NO_LOSS_BVH == 1
 		//triangle might intersect bvh but is so big that no verts are actually within the bvh!
 		
-
 		if (!containsPartTri) {
 			vec3 boxhalfsize = { 0 };
 			boxhalfsize[0] = (bvh->max[0] - bvh->min[0]) / 2.0f;
@@ -301,7 +300,7 @@ int OBJLoader::putVertsInBVH(Vertex* vertData, int numVerts, BVH_BAKE* bvh, int 
 			}
 			
 
-			if (!addedAlready || true) {
+			//if (!addedAlready || true) {
 
 				if (!addedAlready) addedTris++;
 
@@ -345,7 +344,7 @@ int OBJLoader::putVertsInBVH(Vertex* vertData, int numVerts, BVH_BAKE* bvh, int 
 					}
 				}
 				*/
-			}
+			//}
 		}
 	}
 
@@ -555,10 +554,13 @@ int OBJLoader::putBVH(BVH* bvhData, BVH_BAKE* bvh, Vertex* vertData, int numVert
 		//bvhData[bvhIdx].numTris = (requiredtriLists == 1) ? numTrisToAdd : BVH_CHUNK_SIZE;
 		bvhData[bvhIdx].numTris = numTrisToAdd;
 		//for (int chunk = 0; chunk < requiredtriLists; chunk++) {
+
 			for (int t = 0; t < numTrisToAdd; t++) {
+			//for (int t = 0; t < min(BVH_CHUNK_SIZE, numTrisToAdd); t++) {
 				//std::cout << "Adding " << t << "=" << bvh->triIdx[t] << std::endl;
 				bvhData[bvhIdx].triIdx[t] = bvh->triIdx[t];
 			}
+
 		//}
 
 		added++;
@@ -614,6 +616,10 @@ int OBJLoader::createBVH(BVH* bvhData, int numBVH, Vertex* vertData, int numVert
 	return octree;
 }
 
+
+///////////////////////////////////////////////////////////////////////////////
+// OBJ loading code adapted from openGL/C++ examples, UEA
+////////////////////////////////////////////////////////////////////////////////
 
 bool OBJLoader::myFileLoader(const char *filename)
 {

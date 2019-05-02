@@ -31,7 +31,7 @@
 #include <windows.h>
 #endif
 
-#include <GLFW/glfw3.h>
+#include <glfw3.h>
 #include <vulkan/vulkan.h>
 
 #include <chrono>
@@ -76,7 +76,7 @@
 
  //NOTE: only support power-of-two DRSD values (for maximising GPU utilisation)
 //#define DEFERRED_REFRESH_SQUARE_DIM 1
-//#define DEFERRED_REFRESH_SQUARE_DIM 2
+//define DEFERRED_REFRESH_SQUARE_DIM 2
 #define DEFERRED_REFRESH_SQUARE_DIM 4
 
 //Enable vulkan validation (prints Vulkan validation errors in the console window)
@@ -280,6 +280,9 @@ __device__ float cross(int axis, vec3 a, vec3 b) {
 	if (axis == 1) return a[2] * b[0] - a[0] * b[2];
 	//cx = axby - aybx
 	if (axis == 2) return a[0] * b[1] - a[1] * b[0];
+
+	//unsupported axis index?
+	return 0.0f;
 }
 
 __device__ float intersect(Sphere sphere, vec3 &rayorig, vec3 &raydir)
@@ -338,53 +341,14 @@ struct IntersectionResult{
 	int faceDir = 0;
 };
 
-__device__ void mult(mat4x4 a, vec3 &vec) {
-
-	//|a b c d|
-	//|e f g h|
-	//|i j k l|
-	//|m n o p|
-	//*
-	// x y z w
-	// =
-	//ax+by+cz+dw
-	//ex+fy+gz+hw
-	//ix+jy+kz+lw
-	//mx+ny+oz+pw
-
-	//NOTE: takes Row Major Matrices
-	vec4 newVec = { 0 };
-	newVec[0] = vec[0] * a[0][0] +
-		vec[1] * a[0][1] +
-		vec[2] * a[0][2] +
-		vec[3] * a[0][3];
-	newVec[1] = vec[0] * a[1][0] +
-		vec[1] * a[1][1] +
-		vec[2] * a[1][2] +
-		vec[3] * a[1][3];
-	newVec[2] = vec[0] * a[2][0] +
-		vec[1] * a[2][1] +
-		vec[2] * a[2][2] +
-		vec[3] * a[2][3];
-	newVec[3] = vec[0] * a[3][0] +
-		vec[1] * a[3][1] +
-		vec[2] * a[3][2] +
-		vec[3] * a[3][3];
-
-	//Homogenous to non-homogenous
-	vec[0] = newVec[0] / newVec[3];
-	vec[1] = newVec[1] / newVec[3];
-	vec[2] = newVec[2] / newVec[3];
-}
-
 size_t mesh_width = 0, mesh_height = 0;
 std::string execution_path;
 
 ////START RAYTRACING
 
 
-const int MAX_RAY_DEPTH = 3;
-//const int MAX_RAY_DEPTH = 4;
+//const int MAX_RAY_DEPTH = 3;
+const int MAX_RAY_DEPTH = 4;
 
 __device__ void blendCol(Texel* col, float factor, float r, float g, float b) {
 
@@ -691,7 +655,7 @@ __device__ void intersectBVH(BVH* bvh
 	raydir[1] = 1.0f / raydir[1];
 	raydir[2] = 1.0f / raydir[2];
 
-	float minT = 99999.9f;
+	//float minT = 99999.9f;
 
 	int nextOctree = -1;
 	//backwards because the octree is biased in the negative direction
@@ -774,7 +738,7 @@ __device__ void intersectBVH<MAX_BVH_DEPTH>(BVH* bvh
 	raydir[1] = 1.0f / raydir[1];
 	raydir[2] = 1.0f / raydir[2];
 
-	float minT = 99999.9f;
+	//float minT = 99999.9f;
 
 	int nextOctree = -1;
 	//backwards because the octree is biased in the negative direction
@@ -859,14 +823,14 @@ __device__ void RaytraceTris(
 	, float light_x, float light_y, float light_z
 	, IntersectionResult* hitlist
 	, int light_mode
-	, int x1, int y1)
+	, float x1, float y1)
 {
 	
 	//intersectTris(1, verts, hitlist, factor, numTris, orig_x, orig_y, orig_z, ray_x, ray_y, ray_z, -1.0f);
 	intersectBVH<1>(bvh, numBVH, verts, hitlist, factor, numTris, orig_x, orig_y, orig_z, ray_x, ray_y, ray_z, -1.0f);
 
 	int tri = hitlist->triIndex;
-	bool inside = (hitlist->faceDir == -1) ? 1 : 0;
+	bool inside = true;// (hitlist->faceDir == -1) ? 1 : 0;
 
 	if (tri < 0) {
 		//miss - background colour (or intersection debug color)
@@ -874,7 +838,7 @@ __device__ void RaytraceTris(
 			
 			//blendCol(col, factor, 150, 160, 200);
 
-			float4 bgTex = tex2D(cudaTex3, (ray_x +(WIDTH/2))/WIDTH, (ray_y + (HEIGHT / 2)) / HEIGHT);
+			float4 bgTex = tex2D(cudaTex3, (x1 +(WIDTH/2))/WIDTH, (y1 + (HEIGHT / 2)) / HEIGHT);
 
 			blendCol(col, factor
 				, 255 * bgTex.x
@@ -906,14 +870,45 @@ __device__ void RaytraceTris(
 
 		//float normalIntensity = 2.0f;
 		vec3 nnhit = { 0 };
+		//vec3 geometricNor = { 0 };
 		nnhit[0] = hitlist->normal[0];
 		nnhit[1] = hitlist->normal[1];
 		nnhit[2] = hitlist->normal[2];
 
 		float nnhitmag = magnitude(nnhit);
-		nnhit[0] = nnhit[0] / nnhitmag * ((inside) ? 1 : -1);
-		nnhit[1] = nnhit[1] / nnhitmag * ((inside) ? 1 : -1);
-		nnhit[2] = nnhit[2] / nnhitmag * ((inside) ? 1 : -1);
+		nnhit[0] = nnhit[0] / nnhitmag;
+		nnhit[1] = nnhit[1] / nnhitmag;
+		nnhit[2] = nnhit[2] / nnhitmag;
+
+		vec3 raydir = { 0 };
+		raydir[0] = ray_x;
+		raydir[1] = ray_y;
+		raydir[2] = ray_z;
+		float raydirmag = magnitude(raydir);
+		raydir[0] = ray_x / raydirmag;
+		raydir[1] = ray_y / raydirmag;
+		raydir[2] = ray_z / raydirmag;
+
+
+		vec3 nraydir = { 0 };
+		//nraydir[0] = 1.0 / (ray_x+1.0f);
+		//nraydir[1] = 1.0 / (ray_y + 1.0f);
+		//nraydir[2] = 1.0 / (ray_z + 1.0f);
+
+		nraydir[0] = -raydir[0];// / raydirmag;
+		nraydir[1] = -raydir[1];// / raydirmag;
+		nraydir[2] = -raydir[2];// / raydirmag;
+
+		float cosi = dot(nnhit, nraydir);
+		if (cosi > 0) {
+			inside = false;
+			nnhit[0] *= -1.0f;
+			nnhit[1] *= -1.0f;
+			nnhit[2] *= -1.0f;
+		}
+		else {
+			cosi = -cosi;
+		}
 
 		vec3 lightPos = { 0 };
 		lightPos[0] = light_x;
@@ -935,9 +930,9 @@ __device__ void RaytraceTris(
 		vec3 nnhitTang = { 0 };
 
 		float4 normTex = tex2D(cudaTex2, hitlist->uv[0], hitlist->uv[1]);
-		nnhitTang[0] = 1 * (normTex.x * 2.0 - 1.0);
-		nnhitTang[1] = 1 * (normTex.y * 2.0 - 1.0);
-		nnhitTang[2] = -normalIntensity * (normTex.z * 2.0 - 1.0);
+		nnhitTang[0] = (normTex.x * 2.0 - 1.0);
+		nnhitTang[1] = (normTex.y * 2.0 - 1.0);
+		nnhitTang[2] = normalIntensity*(normTex.z * 2.0 - 1.0);
 		//Convert tangent-space bump map to world-space
 		nnhitTang[0] = dotAxis(nnhitTang, 0, 1);
 		nnhitTang[1] = dotAxis(nnhitTang, 1, 1);
@@ -947,16 +942,21 @@ __device__ void RaytraceTris(
 		nnhitTang[1] /= nh;
 		nnhitTang[2] /= nh;
 		//add bump normal to geometry normal
-		nnhit[0] += nnhitTang[0];
-		nnhit[1] += nnhitTang[1];
-		nnhit[2] += nnhitTang[2];
+		nnhit[0] = ((1.0f - normalIntensity)*nnhit[0]) - (normalIntensity*nnhitTang[0]);
+		nnhit[1] = ((1.0f - normalIntensity)*nnhit[1]) - (normalIntensity*nnhitTang[1]);
+		nnhit[2] = ((1.0f - normalIntensity)*nnhit[2]) - (normalIntensity*nnhitTang[2]);
 		//renormalize
 		float nh2 = magnitude(nnhit);
 		nnhit[0] /= nh2;
 		nnhit[1] /= nh2;
 		nnhit[2] /= nh2;
 		
-
+		//use normal map value directly
+		//nnhit[0] = nnhitTang[0];
+		//nnhit[1] = nnhitTang[1];
+		//nnhit[2] = nnhitTang[2];
+		
+		/*
 		//toLight in tri tangent-space
 		vec3 toLightTang = { 0 };
 		toLightTang[0] = toLight[0];
@@ -969,15 +969,7 @@ __device__ void RaytraceTris(
 		toLightTang[0] = toLightTang[0] / distToLightTang;
 		toLightTang[1] = toLightTang[1] / distToLightTang;
 		toLightTang[2] = toLightTang[2] / distToLightTang;
-
-		vec3 raydir = { 0 };
-		raydir[0] = ray_x;
-		raydir[1] = ray_y;
-		raydir[2] = ray_z;
-		float raydirmag = magnitude(raydir);
-		raydir[0] = ray_x / raydirmag;
-		raydir[1] = ray_y / raydirmag;
-		raydir[2] = ray_z / raydirmag;
+		*/
 
 		vec3 nnnhit = { 0 };
 		nnnhit[0] = -nnhit[0];
@@ -1055,19 +1047,20 @@ __device__ void RaytraceTris(
 		//vec3 reflCol = { 0 };
 		//vec3 refrCol = { 0 };
 
-		vec3 nraydir = { 0 };
-		nraydir[0] = -ray_x / raydirmag;
-		nraydir[1] = -ray_y / raydirmag;
-		nraydir[2] = -ray_z / raydirmag;
 
-		float facingratio = dot(raydir, nnnhit);
+		//float facingratio = cosi;// dot(nraydir, nnhit);
+		//float fresneleffect = (light_mode == 0) ? 1.0f : 0.5f;
+		//float fresneleffect = max(0.1f, (0.9f * (1 - facingratio) * (1 - facingratio) * (1 - facingratio)));
+		//fresneleffect = min(fresneleffect, 0.5f);
 
-		float fresneleffect = (light_mode == 0) ? 1.0f : 0.5f;// max(0.1f, ((0.9f * (1 - facingratio) * (1 - facingratio) * (1 - facingratio)) + 0.1f));
-		fresneleffect = min(fresneleffect, 1.0f);
+		//calculate fresnel in case of transp
+		float fresneleffect = 0.0f;
+		if (light_mode >= 2) {
+			//more transparent the more aligned normal is to reverse raydir
+			float fac = dot(raydir, nnnhit);
+			fresneleffect = max(0.1f, min(0.4f, 0.5f*((1 - fac) * (1 - fac)*(0.9f)) ));
+		}
 
-		float cosi = dot(raydir, nnhit);
-
-		float transp = 1.0f;
 		//if (light_mode >= 2) {
 
 			float eta = (inside) ? 1.01f : 1.0f / 1.01f;
@@ -1172,8 +1165,9 @@ __device__ void RaytraceTris(
 		//}
 
 		//diffuse to refl/refr ratio
-		float diffuseBlend = (depth+1 == MAX_RAY_DEPTH) ? 1.0f : 0.8f;
-		
+		//TODO:
+		//at the final bounce we'll collect background color, should use russian roulette here!
+		float diffuseBlend = (depth + 1 == MAX_RAY_DEPTH) ? 0.9f : 0.5f;
 
 		diffCol[0] = diffCol[0] * m;
 		diffCol[1] = diffCol[1] * m;
@@ -1192,14 +1186,15 @@ __device__ void RaytraceTris(
 				, 255 * diffCol[2]);
 		}
 
-		if (light_mode != 0) {
+		//we have some transp/refl to calculate
+		if (light_mode != 0 && 1.0f - diffuseBlend > 0.0f) {
 
 
 			//TODO: recursive raytrace depth
 			//raytrace refl
 			//factor = (1.0f - diffuseBlend) * fresneleffect
 			if (light_mode == 1 || light_mode == 3) RaytraceTris<depth+1>(col
-				, (1.0f - diffuseBlend) * fresneleffect
+				, (1.0f - diffuseBlend) * (0.5f - fresneleffect)
 				, bvh
 				, numBVH
 				, verts
@@ -1213,8 +1208,7 @@ __device__ void RaytraceTris(
 			//raytrace refr
 			//factor = (1.0f - diffuseBlend) * (1 - fresneleffect) * transp
 			if (light_mode >= 2) RaytraceTris<depth+1>(col
-				, (1.0f - diffuseBlend) * (1 - fresneleffect ) * transp
-				//, 1.0f
+				, (1.0f - diffuseBlend) * fresneleffect
 				, bvh
 				, numBVH
 				, verts
@@ -1226,7 +1220,7 @@ __device__ void RaytraceTris(
 				, light_mode
 				, x1, y1);
 		}
-
+		
 		//float colMag = magnitude(diffCol);
 		//diffCol[0] = diffCol[0] / colMag;
 		//diffCol[1] = diffCol[1] / colMag;
@@ -1265,22 +1259,29 @@ __device__ void RaytraceTris<MAX_RAY_DEPTH>(
 	, float light_x, float light_y, float light_z
 	, IntersectionResult* hitlist
 	, int light_mode
-	,int x1, int y1)
+	, float x1, float y1)
 {
 
-	float4 bgTex = tex2D(cudaTex3, (ray_x + (WIDTH / 2)) / WIDTH, (ray_y + (HEIGHT / 2)) / HEIGHT);
+	float4 bgTex = tex2D(cudaTex3, (x1 + (WIDTH / 2)) / WIDTH, (y1 + (HEIGHT / 2)) / HEIGHT);
 
-	blendCol(col, factor
-		, 255 * bgTex.x
-		, 255 * bgTex.y
-		, 255 * bgTex.z
+	//TODO maintain "russian roulette" probability factor to adjust energy here
+	//Terminate the ray and add background color
+	blendCol(col
+		, factor
+		, bgTex.x
+		,  bgTex.y
+		,  bgTex.z
 	);
+	
+	//setCol(col
+		//, 255, 255, 0);
 
-	//blendCol(col, factor*0.5f		, 255		, 255		, 0);
 	return;
 }
 
 #elif SHAPE_MODE==1
+
+const int NUM_LIGHTS = 2;
 
 template <int depth>
 __device__ void Raytrace(Texel* col
@@ -1744,8 +1745,6 @@ int NUM_TRIS = 0;
 int NUM_BVH = 0;
 int NUM_OCTREE = 0;
 
-const int NUM_LIGHTS = 2;
-
 void* cudaVerts;
 Vertex* vertData;
 
@@ -2027,19 +2026,19 @@ private:
 	}
 
 	void setupDebugCallback() {
-		if (!enableValidationLayers) return;
+		if (enableValidationLayers) {
 
-		VkDebugReportCallbackCreateInfoEXT createInfo = {};
-		createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT;
-		createInfo.flags =
-			VK_DEBUG_REPORT_ERROR_BIT_EXT | VK_DEBUG_REPORT_WARNING_BIT_EXT;
-		createInfo.pfnCallback = debugCallback;
+			VkDebugReportCallbackCreateInfoEXT createInfo = {};
+			createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT;
+			createInfo.flags =
+				VK_DEBUG_REPORT_ERROR_BIT_EXT | VK_DEBUG_REPORT_WARNING_BIT_EXT;
+			createInfo.pfnCallback = debugCallback;
 
-		if (CreateDebugReportCallbackEXT(instance, &createInfo, nullptr,
-			&callback) != VK_SUCCESS) {
-			throw std::runtime_error("failed to set up debug callback!");
+			if (CreateDebugReportCallbackEXT(instance, &createInfo, nullptr,
+				&callback) != VK_SUCCESS) {
+				throw std::runtime_error("failed to set up debug callback!");
+			}
 		}
-
 	}
 
 	void initWindow() {
