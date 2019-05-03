@@ -74,7 +74,7 @@
 #define BVH_DEBUG_VISUALISATION 0
 #define CULLING 1
 //slower visual presentation when CPU prints with cout (but the frames are still rendered by CUDA as fast)
-#define PRINT_FPS 1
+#define PRINT_FPS 0
 #define NORMAL_MAPPING 1
 
  //NOTE: only support power-of-two DRSD values (for maximising GPU utilisation)
@@ -828,7 +828,7 @@ __device__ void RaytraceTris(
 	, int light_mode
 	, float x1, float y1)
 {
-	
+
 	//intersectTris(1, verts, hitlist, factor, numTris, orig_x, orig_y, orig_z, ray_x, ray_y, ray_z, -1.0f);
 	intersectBVH<1>(bvh, numBVH, verts, hitlist, factor, numTris, orig_x, orig_y, orig_z, ray_x, ray_y, ray_z, -1.0f);
 
@@ -926,7 +926,7 @@ __device__ void RaytraceTris(
 		toLight[0] = toLight[0] / distToLight;
 		toLight[1] = toLight[1] / distToLight;
 		toLight[2] = toLight[2] / distToLight;
-
+		
 
 #if NORMAL_MAPPING == 1
 		//tangent space normal (i.e. oriented to triangle)
@@ -1023,9 +1023,9 @@ __device__ void RaytraceTris(
 			*/
 
 			vec3 halfwayDir = { 0 };
-			halfwayDir[0] = toLight[0] + raydir[0];
-			halfwayDir[1] = toLight[1] + raydir[1];
-			halfwayDir[2] = toLight[2] + raydir[2];
+			halfwayDir[0] = toLight[0] * distToLight + raydir[0] * raydirmag;
+			halfwayDir[1] = toLight[1] * distToLight  + raydir[1] * raydirmag;
+			halfwayDir[2] = toLight[2] * distToLight + raydir[2] * raydirmag;
 			float hwdmag = magnitude(halfwayDir);
 			halfwayDir[0] /= hwdmag;
 			halfwayDir[1] /= hwdmag;
@@ -1036,9 +1036,11 @@ __device__ void RaytraceTris(
 				abs(dot(halfwayDir, nnhit))
 				, abs(dot(halfwayDir, nnnhit))
 			);
-			
-			//TODO: spec has weird pattern
+
+			//light "power"
+			m = m * 1.5f;
 			m = max(0.1f, (0.5f*(spec * spec * spec)*m) + (0.5f*m));
+			m = min(1.0f, m);
 		}
 
 		/*
@@ -1694,42 +1696,56 @@ __global__ void get_raytraced_pixels(
 			//image
 			&pixels[y_int * WIDTH + x_int]
 			//factor to keep old color
-			,factor
+			, factor
 			//spheres
 			, spheres, numSpheres
 			//cam projection (smaller z = larger fov)
 			, x, y, -600
 			//cam pos
-			, cam_x + (WIDTH/-2.0f), cam_y + (HEIGHT/-2.0f), cam_z+1000,
+			, cam_x + (WIDTH / -2.0f), cam_y + (HEIGHT / -2.0f), cam_z + 1000,
 			-1
-			,1.0f, 1.0f, 1.0f);
+			, 1.0f, 1.0f, 1.0f);
 
 #elif SHAPE_MODE == 0
-			//START PERSPECTIVE MATRIX
-	//TODO: calculate on host and copy to CUDA device once/when changed
-		
-		//aspect ratio: x/y
+		//START PERSPECTIVE MATRIX
+//TODO: calculate on host and copy to CUDA device once/when changed
+
+	//aspect ratio: x/y
 
 		const float zFar = -900;
 
-		RaytraceTris<1>(
-			//image
-			&pixels[(y_int * WIDTH) + (x_int)]
-			//factor to keep old color
-			, factor
-			//bvh
-			, bvh, numBVH
-			//verts
-			, verts, numTris
-			//raydir (also acts as cam projection where smaller z = larger fov)
-			, x, y, zFar
-			//cam pos
-			, cam_x + (WIDTH / -2.0f), cam_y + (HEIGHT / -2.0f), cam_z + 3000
-			, light_x, light_y, light_z
-			, &hitlist[(raw_y * (WIDTH/(squareDim))) + (raw_x)]
-			, light_mode
-			, x, y
-			);
+		float cam_x2 = (cam_x + (WIDTH / -2.0f)) + x;
+		float cam_y2 = (cam_y + (HEIGHT / -2.0f)) + y;
+		/*
+		Abandoned attempt to odraw light without ray-tracing it
+		float lightDist = sqrtf((cam_x2 - light_x)*(cam_x2 - light_x) + (cam_y2 - light_y)*(cam_y2 - light_y));
+		
+		if (lightDist < 15.0f) {
+			pixels[(y_int * WIDTH) + (x_int)].col[0] = 255;
+			pixels[(y_int * WIDTH) + (x_int)].col[1] = 255;
+			pixels[(y_int * WIDTH) + (x_int)].col[2] = 255;
+		}
+		else {
+		*/
+			RaytraceTris<1>(
+				//image
+				&pixels[(y_int * WIDTH) + (x_int)]
+				//factor to keep old color
+				, factor
+				//bvh
+				, bvh, numBVH
+				//verts
+				, verts, numTris
+				//raydir (also acts as cam projection where smaller z = larger fov)
+				, x, y, zFar
+				//cam pos
+				, cam_x2, cam_y2, cam_z
+				, light_x, light_y, light_z
+				, &hitlist[(raw_y * (WIDTH / (squareDim))) + (raw_x)]
+				, light_mode
+				, x, y
+				);
+		//}
 
 #endif
 	}
@@ -1761,9 +1777,10 @@ IntersectionResult* hitListData;
 //Player State
 bool spheresChanged;
 bool vertsChanged;
-float cam_x = -20.0f;
-float cam_y = -1200.0f;
-float cam_z = 1000.0f;
+float cam_x = 0.0f;
+//-y is up
+float cam_y = 0.0f;
+float cam_z = 4000.0f;
 
 //0 = diffuse, 1 = refl, 2 = refr, 3 refl+refr
 int light_mode = 0;
