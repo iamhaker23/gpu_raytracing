@@ -49,9 +49,10 @@ int OBJLoader::loadRawVertexList(const char * fileName, Vertex** vertData) {
 		unsigned int normBIdx = m_vFaces[face].m_uiNormalIdx[1];
 		unsigned int normCIdx = m_vFaces[face].m_uiNormalIdx[2];
 
-		unsigned int uvAIdx = m_vFaces[face].m_uiTexCoordIdx[0];
-		unsigned int uvBIdx = m_vFaces[face].m_uiTexCoordIdx[1];
-		unsigned int uvCIdx = m_vFaces[face].m_uiTexCoordIdx[2];
+		//fix: uv co-ordinates are not in sequence order
+		unsigned int uvAIdx = m_vFaces[face].m_uiTexCoordIdx[2];
+		unsigned int uvBIdx = m_vFaces[face].m_uiTexCoordIdx[0];
+		unsigned int uvCIdx = m_vFaces[face].m_uiTexCoordIdx[1];
 		
 		//TODO: use vertex indexing to minimise duplication in vertData
 		//Get distinct vertex points

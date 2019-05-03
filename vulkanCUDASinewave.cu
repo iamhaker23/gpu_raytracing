@@ -72,7 +72,7 @@
 #define HEIGHT 1024
 #define SHAPE_MODE 0
 #define BVH_DEBUG_VISUALISATION 0
-#define CULLING 1
+#define CULLING 0
 //slower visual presentation when CPU prints with cout (but the frames are still rendered by CUDA as fast)
 #define PRINT_FPS 0
 #define NORMAL_MAPPING 1
@@ -568,15 +568,17 @@ __device__ void intersectTris(int* vertIdx, Vertex* verts, IntersectionResult* o
 			(verts[closestTri + 1].normal[2] * minV) +
 			(verts[closestTri + 2].normal[2] * minU);
 
-
-		outhit->uv[0] =
+		//bugfix -> Blender UV co-ordinate system has flipped U compared to tex2D
+		outhit->uv[0] = (
 			(verts[closestTri + 0].uv[0] * (1.0 - minV - minU)) +
 			(verts[closestTri + 1].uv[0] * minV) +
-			(verts[closestTri + 2].uv[0] * minU);
-		outhit->uv[1] =
+			(verts[closestTri + 2].uv[0] * minU)
+			);
+		outhit->uv[1] = 1.0f - (
 			(verts[closestTri + 0].uv[1] * (1.0 - minV - minU)) +
 			(verts[closestTri + 1].uv[1] * minV) +
-			(verts[closestTri + 2].uv[1] * minU);
+			(verts[closestTri + 2].uv[1] * minU)
+			);
 
 		//float uvmag = magnitude(outhit->uv);
 		//outhit->uv[0] = outhit->uv[0] / WIDTH;
@@ -1001,11 +1003,12 @@ __device__ void RaytraceTris(
 			nnnhitTang[2] = -nnhitTang[2];
 			*/
 
+			//Fix: removed double-sided lighting
 			m = max(m,
-				 max(
-					(dot(toLight,nnnhit))
-					, (dot(toLight, nnhit))
-				)
+				// max(
+				//	(dot(toLight, nnhit))
+					 (dot(toLight, nnnhit))
+				//)
 			);
 			
 			/*
@@ -1039,7 +1042,7 @@ __device__ void RaytraceTris(
 
 			//light "power"
 			m = m * 1.5f;
-			m = max(0.1f, (0.5f*(spec * spec * spec)*m) + (0.5f*m));
+			m = max(0.1f, (0.5f*(spec * spec * spec * spec)*m) + (0.5f*m));
 			m = min(1.0f, m);
 		}
 
@@ -1052,8 +1055,7 @@ __device__ void RaytraceTris(
 
 		//vec3 reflCol = { 0 };
 		//vec3 refrCol = { 0 };
-
-
+		
 		//float facingratio = cosi;// dot(nraydir, nnhit);
 		//float fresneleffect = (light_mode == 0) ? 1.0f : 0.5f;
 		//float fresneleffect = max(0.1f, (0.9f * (1 - facingratio) * (1 - facingratio) * (1 - facingratio)));
@@ -1739,7 +1741,7 @@ __global__ void get_raytraced_pixels(
 				//raydir (also acts as cam projection where smaller z = larger fov)
 				, x, y, zFar
 				//cam pos
-				, cam_x2, cam_y2, cam_z
+				, cam_x, cam_y, cam_z
 				, light_x, light_y, light_z
 				, &hitlist[(raw_y * (WIDTH / (squareDim))) + (raw_x)]
 				, light_mode
@@ -1786,8 +1788,8 @@ float cam_z = 4000.0f;
 int light_mode = 0;
 
 float light_x = 0.0f;
-float light_y = -1000.0f;
-float light_z = -1500.0f;
+float light_y = 0.0f;
+float light_z = 1000.0f;
 
 int framesRefreshRequired = 0;
 
