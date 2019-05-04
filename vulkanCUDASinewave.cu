@@ -74,8 +74,16 @@
 #define BVH_DEBUG_VISUALISATION 0
 #define CULLING 0
 //slower visual presentation when CPU prints with cout (but the frames are still rendered by CUDA as fast)
-#define PRINT_FPS 0
-#define NORMAL_MAPPING 1
+#define PRINT_FPS 1
+
+//bump mapping OR normal mapping (normal mapping will override if both set)
+#define NORMAL_MAPPING 0
+#define BUMP_MAPPING 1
+
+#define UV_FILTERING_ENABLED 1
+#define UV_FILTER_SIZE 1000.0f
+
+#define USE_BVH 0
 
  //NOTE: only support power-of-two DRSD values (for maximising GPU utilisation)
 //#define DEFERRED_REFRESH_SQUARE_DIM 1
@@ -396,22 +404,7 @@ __device__ void setCol(Texel* col, float r, float g, float b) {
 }
 
 __device__ void intersectTris(int* vertIdx, Vertex* verts, IntersectionResult* outhit, float factor, int numTris, float orig_x, float orig_y, float orig_z, float ray_x, float ray_y, float ray_z, float maxDist) {
-	
-	/*
-	//Important: reset output, or will persist old hit info in the event of a miss
-	outhit->pos[0] = 0;
-	outhit->pos[1] = 0;
-	outhit->pos[2] = 0;
-	outhit->col[0] = 0;
-	outhit->col[1] = 0;
-	outhit->col[2] = 0;
-	outhit->normal[0] = 0;
-	outhit->normal[1] = 0;
-	outhit->normal[2] = 0;
-	outhit->triIndex = -1;
-	outhit->faceDir = 0;
-	*/
-	
+		
 	float minU = -1.0f;
 	float minV = -1.0f;
 	float minT = 99999999.0f;
@@ -424,10 +417,35 @@ __device__ void intersectTris(int* vertIdx, Vertex* verts, IntersectionResult* o
 	raydir[2] = ray_z;
 	float Epsilon = 0.001f;
 
+	// BVH steps through triangle list but no BVH steps directly through vertex list
+#if USE_BVH == 0
+
+	//BVH resets outhit, if no bvh it must be done here
+	outhit->pos[0] = 0;
+	outhit->pos[1] = 0;
+	outhit->pos[2] = 0;
+	outhit->col[0] = 0;
+	outhit->col[1] = 0;
+	outhit->col[2] = 0;
+	outhit->normal[0] = 0;
+	outhit->normal[1] = 0;
+	outhit->normal[2] = 0;
+	outhit->triIndex = -1;
+	outhit->faceDir = 0;
+	outhit->tmin = -1;
+	outhit->uv[0] = 0;
+	outhit->uv[1] = 0;
+
+
+	int step = 3;
+#else
+	int step = 1;
+#endif
+
 	//triangle - 3 index of verts
 	//triangle - 3 index in bvh index list
-	for (int tri = 0; tri < numTris; tri++) {
 
+	for (int tri = 0; tri < numTris*step; tri += step) {
 		//Moller-Trumbore
 		//V1
 		//V2
@@ -439,7 +457,23 @@ __device__ void intersectTris(int* vertIdx, Vertex* verts, IntersectionResult* o
 		vec3 V2 = { 0 };
 		vec3 V3 = { 0 };
 
-		//2,1,0 to reverse face loop (for OBJ exported from blender)
+
+		//Order is 2,1,0 to reverse face loop
+		//For correct UV mapping
+#if USE_BVH == 0
+
+		V1[0] = verts[tri + 2].pos[0];
+		V1[1] = verts[tri + 2].pos[1];
+		V1[2] = verts[tri + 2].pos[2];
+
+		V2[0] = verts[tri + 1].pos[0];
+		V2[1] = verts[tri + 1].pos[1];
+		V2[2] = verts[tri + 1].pos[2];
+
+		V3[0] = verts[tri + 0].pos[0];
+		V3[1] = verts[tri + 0].pos[1];
+		V3[2] = verts[tri + 0].pos[2];
+#else
 
 		V1[0] = verts[vertIdx[tri]+2].pos[0];
 		V1[1] = verts[vertIdx[tri]+2].pos[1];
@@ -452,6 +486,7 @@ __device__ void intersectTris(int* vertIdx, Vertex* verts, IntersectionResult* o
 		V3[0] = verts[vertIdx[tri]+0].pos[0];
 		V3[1] = verts[vertIdx[tri]+0].pos[1];
 		V3[2] = verts[vertIdx[tri]+0].pos[2];
+#endif
 
 		/* //IF ALL VERTS ARE BEHIND CAMERA
 		if (V1[2] > 0) V1[2] = -1.0f;
@@ -528,7 +563,12 @@ __device__ void intersectTris(int* vertIdx, Vertex* verts, IntersectionResult* o
 				minT = t;
 				minU = U;
 				minV = V;
+
+#if USE_BVH == 0
+				closestTri = tri;
+#else
 				closestTri = vertIdx[tri];
+#endif
 
 				faceDir = (A < Epsilon) ? -1 : 1;
 			}
@@ -569,17 +609,33 @@ __device__ void intersectTris(int* vertIdx, Vertex* verts, IntersectionResult* o
 			(verts[closestTri + 2].normal[2] * minU);
 
 		//bugfix -> Blender UV co-ordinate system has flipped U compared to tex2D
+#if UV_FILTERING_ENABLED == 1
+		
+			//filtersize blurs normal map (to quantize interpolation and reduce noise)
+		outhit->uv[0] = roundf((
+			(verts[closestTri + 0].uv[0] * (1.0 - minV - minU)) +
+			(verts[closestTri + 1].uv[0] * minV) +
+			(verts[closestTri + 2].uv[0] * minU)
+			)*UV_FILTER_SIZE) / UV_FILTER_SIZE;
+		outhit->uv[1] = roundf((1.0f - (
+			(verts[closestTri + 0].uv[1] * (1.0 - minV - minU)) +
+			(verts[closestTri + 1].uv[1] * minV) +
+			(verts[closestTri + 2].uv[1] * minU)
+			))*UV_FILTER_SIZE) / UV_FILTER_SIZE;
+
+#else
+		//filtersize blurs normal map (to quantize interpolation and reduce noise)
 		outhit->uv[0] = (
 			(verts[closestTri + 0].uv[0] * (1.0 - minV - minU)) +
 			(verts[closestTri + 1].uv[0] * minV) +
 			(verts[closestTri + 2].uv[0] * minU)
-			);
-		outhit->uv[1] = 1.0f - (
+			) ;
+		outhit->uv[1] = ((1.0f - (
 			(verts[closestTri + 0].uv[1] * (1.0 - minV - minU)) +
 			(verts[closestTri + 1].uv[1] * minV) +
 			(verts[closestTri + 2].uv[1] * minU)
-			);
-
+			)));
+#endif
 		//float uvmag = magnitude(outhit->uv);
 		//outhit->uv[0] = outhit->uv[0] / WIDTH;
 		//outhit->uv[1] = outhit->uv[1] / HEIGHT;
@@ -831,8 +887,13 @@ __device__ void RaytraceTris(
 	, float x1, float y1)
 {
 
-	//intersectTris(1, verts, hitlist, factor, numTris, orig_x, orig_y, orig_z, ray_x, ray_y, ray_z, -1.0f);
+
+#if USE_BVH == 0
+	int null = 0;
+	intersectTris(&null, verts, hitlist, factor, numTris, orig_x, orig_y, orig_z, ray_x, ray_y, ray_z, -1.0f);
+#else
 	intersectBVH<1>(bvh, numBVH, verts, hitlist, factor, numTris, orig_x, orig_y, orig_z, ray_x, ray_y, ray_z, -1.0f);
+#endif
 
 	int tri = hitlist->triIndex;
 	bool inside = true;// (hitlist->faceDir == -1) ? 1 : 0;
@@ -938,7 +999,25 @@ __device__ void RaytraceTris(
 		float4 normTex = tex2D(cudaTex2, hitlist->uv[0], hitlist->uv[1]);
 		nnhitTang[0] = (normTex.x * 2.0 - 1.0);
 		nnhitTang[1] = (normTex.y * 2.0 - 1.0);
-		nnhitTang[2] = normalIntensity*(normTex.z * 2.0 - 1.0);
+		nnhitTang[2] = -normalIntensity * (normTex.z * 2.0 - 1.0);
+		//Convert tangent-space normal map to world-space
+		nnhit[0] = dotAxis(nnhitTang, 0, 1);
+		nnhit[1] = dotAxis(nnhitTang, 1, 1);
+		nnhit[2] = dotAxis(nnhitTang, 2, 1);
+		float nh = magnitude(nnhit);
+		nnhit[0] /= nh;
+		nnhit[1] /= nh;
+		nnhit[2] /= nh;
+
+#elif BUMP_MAPPING == 1
+		//tangent space normal (i.e. oriented to triangle)
+		float normalIntensity = 0.3f;
+		vec3 nnhitTang = { 0 };
+
+		float4 normTex = tex2D(cudaTex2, hitlist->uv[0], hitlist->uv[1]);
+		nnhitTang[0] = (normTex.x * 2.0 - 1.0);
+		nnhitTang[1] = (normTex.y * 2.0 - 1.0);
+		nnhitTang[2] = normalIntensity * (normTex.z * 2.0 - 1.0);
 		//Convert tangent-space bump map to world-space
 		nnhitTang[0] = dotAxis(nnhitTang, 0, 1);
 		nnhitTang[1] = dotAxis(nnhitTang, 1, 1);
@@ -956,6 +1035,7 @@ __device__ void RaytraceTris(
 		nnhit[0] /= nh2;
 		nnhit[1] /= nh2;
 		nnhit[2] /= nh2;
+
 #endif
 		//use normal map value directly
 		//nnhit[0] = nnhitTang[0];
@@ -982,12 +1062,21 @@ __device__ void RaytraceTris(
 		nnnhit[1] = -nnhit[1];
 		nnnhit[2] = -nnhit[2];
 
+#if USE_BVH == 0
+		intersectTris(&null, verts, hitlist, factor, numTris
+			, hitPos[0] + nnhit[0] * 1e-2
+			, hitPos[1] + nnhit[1] * 1e-2
+			, hitPos[2] + nnhit[2] * 1e-2
+			, toLight[0], toLight[1], toLight[2]
+			, distToLight);
+#else
 		intersectBVH<1>(bvh, numBVH, verts, hitlist, factor, numTris
 			, hitPos[0] + nnhit[0] * 1e-2
 			, hitPos[1] + nnhit[1] * 1e-2
 			, hitPos[2] + nnhit[2] * 1e-2
 			, toLight[0], toLight[1], toLight[2]
 			, distToLight);
+#endif
 
 		int shadowCaster = hitlist->triIndex;
 
@@ -1136,6 +1225,7 @@ __device__ void RaytraceTris(
 			refldir[0] = raydir[0] - (nnhit[0] * 2 * cosi2);
 			refldir[1] = raydir[1] - (nnhit[1] * 2 * cosi2);
 			refldir[2] = raydir[2] - (nnhit[2] * 2 * cosi2);
+
 			float refldirmag = magnitude(refldir);
 			refldir[0] = refldir[0] / refldirmag;
 			refldir[1] = refldir[1] / refldirmag;
@@ -1716,8 +1806,8 @@ __global__ void get_raytraced_pixels(
 
 		const float zFar = -900;
 
-		float cam_x2 = (cam_x + (WIDTH / -2.0f)) + x;
-		float cam_y2 = (cam_y + (HEIGHT / -2.0f)) + y;
+		//float cam_x2 = (cam_x + (WIDTH / -2.0f)) + x;
+		//float cam_y2 = (cam_y + (HEIGHT / -2.0f)) + y;
 		/*
 		Abandoned attempt to odraw light without ray-tracing it
 		float lightDist = sqrtf((cam_x2 - light_x)*(cam_x2 - light_x) + (cam_y2 - light_y)*(cam_y2 - light_y));
@@ -2106,7 +2196,7 @@ private:
 		enabledExtensionNameList.push_back(
 			VK_KHR_EXTERNAL_SEMAPHORE_CAPABILITIES_EXTENSION_NAME);
 
-		for (int i = 0; i < glfwExtensionCount; i++) {
+		for (unsigned int i = 0; i < glfwExtensionCount; i++) {
 			enabledExtensionNameList.push_back(glfwExtensions[i]);
 		}
 		if (enableValidationLayers) {
@@ -2119,7 +2209,7 @@ private:
 			createInfo.enabledLayerCount = 0;
 		}
 
-		createInfo.enabledExtensionCount = enabledExtensionNameList.size();
+		createInfo.enabledExtensionCount = static_cast<uint32_t>(enabledExtensionNameList.size());
 		createInfo.ppEnabledExtensionNames = enabledExtensionNameList.data();
 
 		if (vkCreateInstance(&createInfo, nullptr, &instance) != VK_SUCCESS) {
@@ -2470,7 +2560,7 @@ private:
 		createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
 
 		createInfo.pQueueCreateInfos = queueCreateInfos.data();
-		createInfo.queueCreateInfoCount = queueCreateInfos.size();
+		createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
 
 		createInfo.pEnabledFeatures = &deviceFeatures;
 		std::vector<const char*> enabledExtensionNameList;
@@ -3568,7 +3658,7 @@ private:
 
 
 	void mainLoop() {
-		updateUniformBuffer();
+		//updateUniformBuffer();
 		glfwSetKeyCallback(window, key_callback);
 
 		while (!glfwWindowShouldClose(window)) {
@@ -3579,7 +3669,8 @@ private:
 		vkDeviceWaitIdle(device);
 	}
 
-	void updateUniformBuffer() {
+/*
+void updateUniformBuffer() {
 		UniformBufferObject ubo = {};
 
 		mat4x4_identity(ubo.model);
@@ -3600,6 +3691,7 @@ private:
 		memcpy(data, &ubo, sizeof(ubo));
 		vkUnmapMemory(device, uniformBufferMemory);
 	}
+	*/
 
 	void createDescriptorPool() {
 		VkDescriptorPoolSize poolSize = {};
@@ -4423,7 +4515,7 @@ private:
 			cudaEventSynchronize(stop);
 			float milliseconds = 0;
 			cudaEventElapsedTime(&milliseconds, start, stop);
-			std::cout << milliseconds << "ms frame." << std::endl;
+			std::cout << milliseconds << "\tms frame." << std::endl;
 #endif
 
 			//keep count of what sub-frame is being rendered

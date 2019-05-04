@@ -202,7 +202,7 @@ int OBJLoader::loadRawVertexList(const char * fileName, Vertex** vertData) {
 
 	}
 
-	int size = m_distinctVerts.size();
+	int size = static_cast<int>(m_distinctVerts.size());
 	std::cout << "Loading " << size << " vertices (scale=" << VERT_IMPORT_SCALE << "x) from " << fileName << std::endl;
 
 	//return size
@@ -517,7 +517,7 @@ int OBJLoader::countBVHNeeded(Vertex* vertData, int numVerts) {
 
 	int BVHPerOctree = 0;
 	for (int i = 1; i <= MAX_BVH_DEPTH; i++) {
-		BVHPerOctree += pow(8, MAX_BVH_DEPTH-i);
+		BVHPerOctree += static_cast<int>(pow(8, MAX_BVH_DEPTH-i));
 	}
 
 	std::cout << BVHPerOctree << " BVH per octree with depth " << MAX_BVH_DEPTH << std::endl;
@@ -544,7 +544,7 @@ int OBJLoader::putBVH(BVH* bvhData, BVH_BAKE* bvh, Vertex* vertData, int numVert
 		//std::cout << depth << ": BVH->max(" << bvhData[bvhIdx].max[0] << "," << bvhData[bvhIdx].max[1] << "," << bvhData[bvhIdx].max[2] << ")" << std::endl;
 		//std::cout << depth << ": BVH->min(" << bvhData[bvhIdx].min[0] << "," << bvhData[bvhIdx].min[1] << "," << bvhData[bvhIdx].min[2] << ")" << std::endl;
 
-		int numTrisToAdd = bvh->triIdx.size();
+		int numTrisToAdd = static_cast<int>(bvh->triIdx.size());
 
 		std::cout << "Tris to add:" << numTrisToAdd << std::endl;
 
@@ -712,6 +712,7 @@ bool OBJLoader::myFileLoader(const char *filename)
 			readFaceLine(theFile, currentMat);
 			break;
 		}
+		/*
 		case 'm': //It's the material lib
 		{
 			char buff[255];
@@ -723,6 +724,8 @@ bool OBJLoader::myFileLoader(const char *filename)
 			myMTLLoader(filename, buff2);
 			break;
 		}
+		*/
+		/*
 		case 'u': //Change current Material
 		{
 			char buff[255];
@@ -735,6 +738,8 @@ bool OBJLoader::myFileLoader(const char *filename)
 
 			break;
 		}
+		*/
+
 		default: // A bit we don't know about - skip line
 		{
 			if ((firstChar != 10))
@@ -835,6 +840,9 @@ bool OBJLoader::myMTLLoader(const char *mainName, const char *filename)
 
 	ObjMat newMaterial;
 
+	//04/05/19
+	//Commented material import code
+	//unused in the raytracer and causes compiler warnings with using %s in sscan_s
 	while (!fin.eof())
 
 	{
@@ -850,6 +858,8 @@ bool OBJLoader::myMTLLoader(const char *mainName, const char *filename)
 			fin >> std::ws;
 
 		}
+		
+		/*
 		else if (identifierStr == "newmtl")
 		{
 			//cout << "newmtl" <<endl;
@@ -883,6 +893,7 @@ bool OBJLoader::myMTLLoader(const char *mainName, const char *filename)
 			foundNewMaterial = true;
 
 		}
+		*/
 
 		else if (identifierStr == "Ns" || identifierStr == "Ni" || identifierStr == "Tr" || identifierStr == "Tf")//skip all these
 
@@ -962,6 +973,7 @@ bool OBJLoader::myMTLLoader(const char *mainName, const char *filename)
 
 		}
 
+		/*
 		else if (identifierStr == "map_Kd")
 
 		{
@@ -973,7 +985,8 @@ bool OBJLoader::myMTLLoader(const char *mainName, const char *filename)
 			sscanf_s(line, "%s", &newMaterial.textureName, _countof(line));
 
 		}
-
+		*/
+		/*
 		else if (identifierStr == "map_Bump")//modified for normal map
 
 		{
@@ -987,7 +1000,7 @@ bool OBJLoader::myMTLLoader(const char *mainName, const char *filename)
 			sscanf_s(line, "%s", &newMaterial.bumpTextureName, _countof(line));
 
 		}
-
+		*/
 		else//skip anything else
 
 		{

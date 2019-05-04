@@ -2,10 +2,9 @@
 #include "linmath.h"
 
 //TODO: handle chunking correctly (need to add chunked BVH at "count time" but currently uses pointer) 
-#define BVH_CHUNK_SIZE 600
+#define BVH_CHUNK_SIZE 4000
 
 #define BVH_BOX_SIZE 250.0f
-#define BVH_EXPAND_LIMIT 2500.0f
 #define VERT_IMPORT_SCALE 1000.0f
 
 struct BVH {
