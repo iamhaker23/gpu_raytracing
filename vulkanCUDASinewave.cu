@@ -74,11 +74,12 @@
 #define BVH_DEBUG_VISUALISATION 0
 #define CULLING 0
 //slower visual presentation when CPU prints with cout (but the frames are still rendered by CUDA as fast)
-#define PRINT_FPS 1
+#define PRINT_FPS 0
 
 //bump mapping OR normal mapping (normal mapping will override if both set)
 #define NORMAL_MAPPING 0
 #define BUMP_MAPPING 1
+#define BUMP_STRENGTH 0.05f
 
 #define UV_FILTERING_ENABLED 1
 #define UV_FILTER_SIZE 1000.0f
@@ -990,10 +991,11 @@ __device__ void RaytraceTris(
 		toLight[1] = toLight[1] / distToLight;
 		toLight[2] = toLight[2] / distToLight;
 		
+		float normalIntensity = BUMP_STRENGTH;
 
 #if NORMAL_MAPPING == 1
 		//tangent space normal (i.e. oriented to triangle)
-		float normalIntensity = 0.3f;
+		
 		vec3 nnhitTang = { 0 };
 
 		float4 normTex = tex2D(cudaTex2, hitlist->uv[0], hitlist->uv[1]);
@@ -1011,7 +1013,7 @@ __device__ void RaytraceTris(
 
 #elif BUMP_MAPPING == 1
 		//tangent space normal (i.e. oriented to triangle)
-		float normalIntensity = 0.3f;
+		
 		vec3 nnhitTang = { 0 };
 
 		float4 normTex = tex2D(cudaTex2, hitlist->uv[0], hitlist->uv[1]);
@@ -1706,6 +1708,30 @@ __global__ void update_vertex_data(Vertex* verts, int numTris) {
 }
 */
 
+/// <summary>
+/// CUDA kernel function for ray-traced rendering into pixel array.
+/// </summary>
+/// <remarks>
+/// Depend
+/// </remarks>
+///<param name = "pixels">A texel array to write rendered pixels into</param>
+///<param name = "bvh">The BVH AABB array, used if BVH enabled</param>
+///<param name = "numBVH">The number of BVH, used if BVH enabled</param>
+///<param name = "verts">The vertices to ray-trace</param>
+///<param name = "numTris">Number of triangles in the vertex array</param>
+///<param name = "spheres">The spheres to ray-trace</param>
+///<param name = "numSpheres">The number of spheres</param>
+///<param name = "cam_x">The x-coordinate of the camera position</param>
+///<param name = "cam_y">The y-coordinate of the camera position</param>
+///<param name = "cam_z">The z-coordinate of the camera position</param>
+///<param name = "light_x">The x-coordinate of the light position</param>
+///<param name = "light_y">The y-coordinate of the light position</param>
+///<param name = "light_z">The z-coordinate of the light position</param>
+///<param name = "frame">The current sub-frame to render</param>
+///<param name = "squareDim">The size of the deferred refresh square region</param>
+///<param name = "factor">The influence of rendered pixels when added to pixels (1.0 will overwrite)</param>
+///<param name = "light_mode">The interactive control for which rendering mode to use</param>
+///<param name = "hitlist">A pre-allocated array to store hit results into</param>
 __global__ void get_raytraced_pixels(
 	Texel* pixels
 	, BVH* bvh, int numBVH
