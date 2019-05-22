@@ -41,11 +41,11 @@ Requirements:
 
 ## Screenshots
 
-![rtrt screenshot 1](https://raw.githubusercontent.com/iamhaker23/portfolio/master/rtrt/1.PNG "diffuse render mode")
-![rtrt screenshot 3](https://raw.githubusercontent.com/iamhaker23/portfolio/master/rtrt/3.PNG "diffuse render mode")
-![rtrt screenshot 2](https://raw.githubusercontent.com/iamhaker23/portfolio/master/rtrt/2.PNG "refraction render mode")
-![rtrt screenshot 4](https://raw.githubusercontent.com/iamhaker23/portfolio/master/rtrt/0.jpg "reflection")
-![rtrt screenshot 4](https://raw.githubusercontent.com/iamhaker23/portfolio/master/rtrt/4.PNG "combined reflection/refraction (CRR) render mode")
+![rtrt screenshot 1](https://raw.githubusercontent.com/iamhaker23/portfolio/master/rtrt/1.PNG "Refraction render mode")
+![rtrt screenshot 3](https://raw.githubusercontent.com/iamhaker23/portfolio/master/rtrt/3.PNG "Reflection render mode")
+![rtrt screenshot 2](https://raw.githubusercontent.com/iamhaker23/portfolio/master/rtrt/2.PNG "Diffuse render mode")
+![rtrt screenshot 4](https://raw.githubusercontent.com/iamhaker23/portfolio/master/rtrt/0.jpg "Diffuse render mode")
+![rtrt screenshot 4](https://raw.githubusercontent.com/iamhaker23/portfolio/master/rtrt/4.PNG "Combined reflection/refraction (CRR) render mode")
 
 ## Credits
 
