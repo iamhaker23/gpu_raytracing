@@ -62,6 +62,7 @@ My thanks to:
 * Tomas Akenine-Moller for public-domain triangle-box intersect code (used in BVH generation)
 * Amy Williams, Robert Cook, Moller and Trumbore, Lengyel, Snell, Blinn and Fresnel for the mathematical "tools" which form the basis of this program.
 * Scratchapixel, Realtimerendering and vulkantutorial for their invaluable learning resources.
+* Cornell University for the Cornell Box 3D model, Stanford University for the Stanford Bunny 3D model and Morgan McGuire for hosting such resources online.
 
 ## Issues
 
