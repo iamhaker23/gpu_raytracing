@@ -4,6 +4,8 @@
 * Diffuse, reflection, refraction and combined rendering modes
 * Renders spheres or triangle soup
 * Normal/bump mapping
+* University assignment for final undergraduate project
+* This program is provided only as a demonstration of my software development experience
 
 ## Setup
 
