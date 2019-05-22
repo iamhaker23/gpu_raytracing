@@ -1,73 +1,66 @@
-# simpleVulkan - Vulkan CUDA Interop Sinewave
+# Real-time ray-tracing with Vulkan/CUDA interop.
 
-## Description
+* Real-time ray-tracing (RTRT) renderer
+* Diffuse, reflection, refraction and combined rendering modes
+* Renders spheres or triangle soup
+* Normal/bump mapping
 
-This sample demonstrates Vulkan CUDA Interop. CUDA imports the Vulkan vertex buffer and operates on it to create sinewave, and synchronizes with Vulkan through vulkan semaphores imported by CUDA. This sample depends on Vulkan SDK, GLFW3 libraries, for building this sample please refer to "Build_instructions.txt" provided in this sample's directory
+## Setup
 
-## Key Concepts
+Requirements:
 
-Graphics Interop, CUDA Vulkan Interop, Data Parallel Algorithms
+| Tested GPUs | CUDA architecture | Software | Solution File to use |
+| --- | --- | --- | --- |
+| Nvidia geforce 940M | compute_50,sm_50 | Vulkan 1.0, CUDA 10.0, Visual Studio 2017 | simpleVulkan_vs2017.sln |
+| Nvidia geforce GTX 960 | compute_52,sm_52 | Vulkan 1.1, CUDA 10.1, Visual Studio 2017 | simpleVulkan_vs2015.sln | 
 
-## Supported SM Architectures
+* Ensure VS2017, CUDA toolkit and Vulkan are installed (Guidance [on Nvidia CUDA](https://docs.nvidia.com/cuda/cuda-installation-guide-microsoft-windows/index.html) )
+* Download the project
+* Unzip and open either "simpleVulkan_vs2017.sln" or "simpleVulkan_vs2015.sln"
+* To build and run, choose "Release" (or "debug") and select "Local Windows Debugger"
 
-[SM 3.0 ](https://developer.nvidia.com/cuda-gpus)  [SM 3.5 ](https://developer.nvidia.com/cuda-gpus)  [SM 3.7 ](https://developer.nvidia.com/cuda-gpus)  [SM 5.0 ](https://developer.nvidia.com/cuda-gpus)  [SM 5.2 ](https://developer.nvidia.com/cuda-gpus)  [SM 6.0 ](https://developer.nvidia.com/cuda-gpus)  [SM 6.1 ](https://developer.nvidia.com/cuda-gpus)  [SM 7.0 ](https://developer.nvidia.com/cuda-gpus)  [SM 7.2 ](https://developer.nvidia.com/cuda-gpus)  [SM 7.5 ](https://developer.nvidia.com/cuda-gpus)
+## Instructions To Use
 
-## Supported OSes
+| Control | Key(s) |
+| --- | --- |
+| Change rendering mode | TAB |
+| Move camera | WASD + QZ |
+| Move point light | EGRF + XC |
 
-Linux, Windows
+* OBJ and image textures are easily changeable
+* Settings can be changed with compile-time directives (requires rebuild, more detailed information to follow)
 
-## Supported CPU Architecture
+## Demonstrates
 
-x86_64, aarch64
+* Real-time ray-traced rendering
+* Static BVH for spatial partitioning
+* CUDA 10.0 GPGPU programming
+* Vulkan/CUDA interop.
+* Normal/bump mapping
+* Motion blur (via temporally distributed ray-tracing)
 
-## CUDA APIs involved
+## Screenshots
 
-### [CUDA Runtime API](http://docs.nvidia.com/cuda/cuda-runtime-api/index.html)
-cudaImportExternalMemory, cudaExternalMemoryGetMappedBuffer, cudaImportExternalSemaphore, cudaImportExternalSemaphore, cudaSignalExternalSemaphoresAsync, cudaWaitExternalSemaphoresAsync, cudaDestroyExternalSemaphore, cudaDestroyExternalMemory
+![rtrt screenshot 1](https://raw.githubusercontent.com/iamhaker23/portfolio/master/rtrt/1.PNG "diffuse render mode")
+![rtrt screenshot 3](https://raw.githubusercontent.com/iamhaker23/portfolio/master/rtrt/3.PNG "diffuse render mode")
+![rtrt screenshot 2](https://raw.githubusercontent.com/iamhaker23/portfolio/master/rtrt/2.PNG "refraction render mode")
+![rtrt screenshot 4](https://raw.githubusercontent.com/iamhaker23/portfolio/master/rtrt/0.jpg "reflection")
+![rtrt screenshot 4](https://raw.githubusercontent.com/iamhaker23/portfolio/master/rtrt/4.PNG "combined reflection/refraction (CRR) render mode")
 
-## Dependencies needed to build/run
-[X11](../../README.md#x11), [VULKAN](../../README.md#vulkan)
+## Credits
 
-## Prerequisites
+* **Hakeem Bux** - *Developed for final undergraduate project* - [iamhaker23](https://github.com/iamhaker23)
 
-Download and install the [CUDA Toolkit 10.1](https://developer.nvidia.com/cuda-downloads) for your corresponding platform.
-Make sure the dependencies mentioned in [Dependencies]() section above are installed.
+## Acknowledgments
 
-## Build and Run
+* Based on some initial classes provided by UEA CMP faculty
+My thanks to:
+* Dr. Stephen Laycock for supervising
+* Nvidia for their publicly available Vulkan/CUDA interop. "sinewave" example
+* Tomas Akenine-Moller for public-domain triangle-box intersect code (used in BVH generation)
+* Amy Williams, Robert Cook, Moller and Trumbore, Lengyel, Snell, Blinn and Fresnel for the mathematical "tools" which form the basis of this program.
+* Scratchapixel, Realtimerendering and vulkantutorial for their invaluable learning resources.
 
-### Windows
-The Windows samples are built using the Visual Studio IDE. Solution files (.sln) are provided for each supported version of Visual Studio, using the format:
-```
-*_vs<version>.sln - for Visual Studio <version>
-```
-Each individual sample has its own set of solution files in its directory:
+## Issues
 
-To build/examine all the samples at once, the complete solution files should be used. To build/examine a single sample, the individual sample solution files should be used.
-> **Note:** Some samples require that the Microsoft DirectX SDK (June 2010 or newer) be installed and that the VC++ directory paths are properly set up (**Tools > Options...**). Check DirectX Dependencies section for details."
-
-### Linux
-The Linux samples are built using makefiles. To use the makefiles, change the current directory to the sample directory you wish to build, and run make:
-```
-$ cd <sample_dir>
-$ make
-```
-The samples makefiles can take advantage of certain options:
-*  **TARGET_ARCH=<arch>** - cross-compile targeting a specific architecture. Allowed architectures are x86_64, aarch64.
-    By default, TARGET_ARCH is set to HOST_ARCH. On a x86_64 machine, not setting TARGET_ARCH is the equivalent of setting TARGET_ARCH=x86_64.<br/>
-`$ make TARGET_ARCH=x86_64` <br/> `$ make TARGET_ARCH=aarch64` <br/>
-    See [here](http://docs.nvidia.com/cuda/cuda-samples/index.html#cross-samples) for more details.
-*   **dbg=1** - build with debug symbols
-    ```
-    $ make dbg=1
-    ```
-*   **SMS="A B ..."** - override the SM architectures for which the sample will be built, where `"A B ..."` is a space-delimited list of SM architectures. For example, to generate SASS for SM 50 and SM 60, use `SMS="50 60"`.
-    ```
-    $ make SMS="50 60"
-    ```
-
-*  **HOST_COMPILER=<host_compiler>** - override the default g++ host compiler. See the [Linux Installation Guide](http://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html#system-requirements) for a list of supported host compilers.
-```
-    $ make HOST_COMPILER=g++
-```
-
-## References (for more details)
+* Issues and improvements are discussed in my technical report (available here soon).
