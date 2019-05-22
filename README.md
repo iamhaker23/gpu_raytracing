@@ -54,7 +54,9 @@ Requirements:
 ## Acknowledgments
 
 * Based on some initial classes provided by UEA CMP faculty
+
 My thanks to:
+
 * Dr. Stephen Laycock for supervising
 * Nvidia for their publicly available Vulkan/CUDA interop. "sinewave" example
 * Tomas Akenine-Moller for public-domain triangle-box intersect code (used in BVH generation)
