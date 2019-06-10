@@ -8,7 +8,7 @@
 * This program is provided only as a demonstration of my software development experience
 
 ## Youtube Video
-<a target="_blank" href="https://www.youtube.com/watch?v=makjBE-XKcU"> <img src="https://img.youtube.com/vi/makjBE-XKcU/0.jpg"/> </a> 
+<a href="https://www.youtube.com/watch?v=makjBE-XKcU" target="_blank"> <img src="https://img.youtube.com/vi/makjBE-XKcU/0.jpg"/> </a> 
 
 ## Setup
 
