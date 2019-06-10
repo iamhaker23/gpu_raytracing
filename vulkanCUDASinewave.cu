@@ -25,6 +25,58 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+/*
+ * University of East Anglia
+ * School of Computing Science
+ * Third-year project by Hakeem Bux
+ * <<Real-time Ray-tracing in Vulkan/CUDA>>
+ *
+ * The above notice is retained from the Nvidia Vulkan/CUDA interop. sinewave example 
+ * (accessed from: https://github.com/NVIDIA/cuda-samples/blob/master/Samples/simpleVulkan/vulkanCUDASinewave.cu )
+ * 
+ * This file is a part of the Visual Studio 2015/2017 Visual C++ solution 
+ * (available from: https://github.com/iamhaker23/gpu_raytracing/ )
+ *
+ * External libraries required:
+ *	glfw3.h
+ *	stb_image.h
+ *	drvapi_error_string.h
+ *	exception.h
+ *	helper_cuda.h
+ *	helper_cuda_drvapi.h
+ *	helper_functions.h
+ *	helper_image.h
+ *	helper_multiprocess.cpp
+ *	helper_multiprocess.h
+ *	helper_string.h
+ *	helper_timer.h
+ *	nvrtc_helper.h
+ * Local resources required:
+ *	OBJLoader.h
+ *	OBJLoader.cpp
+ *	Vertex.h
+ *
+ * To build and run this solution requires:
+ *	Vulkan SDK
+ *	CUDA 10.0
+ *	Visual Studio 2017 (with Visual C++)
+ *	Nvidia CUDA-capable GPU
+ *		For Nvidia 940MX with CUDA 10.0, open simpleVulkan_vs2017.vcxproj
+ *		For Nvidia 960 with CUDA 10.1, open simpleVulkan_vs2015.vcxproj
+ *		For any other configurations, modifications are required:
+ *			For different CUDA version, in the appropriate .vcxproj file:
+ *				Replace
+ *				CUDA 10.1.props
+ *				with
+ *				CUDA <<YOUR VERSION NUMBER HERE>>.props
+ *			For different CUDA architecture:
+ *				Change project properties in
+ *				CUDA C/C++ -> device -> code generation
+ *
+ *	Developed on Window 10 (other operating systems not tested).
+ *
+ */
+
 #define GLFW_INCLUDE_VULKAN
 
 #ifdef _WIN64
@@ -62,11 +114,13 @@
 
 #include <cuda.h>
 #include <cuda_runtime.h>
-#include <helper_cuda.h>
+#include <Common/helper_cuda.h>
 
 #include "OBJLoader.h"
 
 #include "linmath.h"
+
+//// START COMPILE-TIME DIRECTIVES
 
 #define WIDTH 1024
 #define HEIGHT 1024
@@ -86,14 +140,152 @@
 
 #define USE_BVH 0
 
- //NOTE: only support power-of-two DRSD values (for maximising GPU utilisation)
-//#define DEFERRED_REFRESH_SQUARE_DIM 1
-//define DEFERRED_REFRESH_SQUARE_DIM 2
+/*
+ *	DEFERRED_REFRESH_SQUARE_DIM only supports power-of-two values (for maximising GPU utilisation)
+ *	#define DEFERRED_REFRESH_SQUARE_DIM 1
+ *	#define DEFERRED_REFRESH_SQUARE_DIM 2
+ *	#define DEFERRED_REFRESH_SQUARE_DIM 2
+ */
 #define DEFERRED_REFRESH_SQUARE_DIM 4
-
-//Enable vulkan validation (prints Vulkan validation errors in the console window)
+//Enable/disable vulkan validation (prints Vulkan validation errors in the console window)
 #define VULKAN_VALIDATION 0
 //#define VULKAN_VALIDATION 1
+
+//// END COMPILE-TIME DIRECTIVES
+
+//// START STRUCTS
+
+struct Texel {
+	stbi_uc col[4] = { 255, 255, 255, 255 };
+
+	Texel() {
+	}
+};
+
+
+struct IntersectionResult {
+	float tmin = -1.0f;
+	vec3 pos = { 0 };
+
+	vec3 normal = { 0 };
+	vec3 uv = { 0 };
+	vec4 col = { 0 };
+	int triIndex = -1;
+	int faceDir = 0;
+};
+
+
+struct Sphere
+{
+	vec3 center;                           /// position of the sphere
+	float radius, radius2;                  /// sphere radius and radius^2
+	vec3 surfaceColor, emissionColor;      /// surface color and emission (light)
+	float transparency, reflection;         /// surface transparency and reflectivity
+	bool castShadows;
+	Sphere(
+		const vec3 &c,
+		const float &r,
+		const vec3 &sc,
+		const float &refl,
+		const float &transp,
+		const vec3 &ec,
+		const bool &shadows
+	) {
+
+		center[0] = c[0];
+		center[1] = c[1];
+		center[2] = c[2];
+
+		surfaceColor[0] = sc[0];
+		surfaceColor[1] = sc[1];
+		surfaceColor[2] = sc[2];
+
+		emissionColor[0] = ec[0];
+		emissionColor[1] = ec[1];
+		emissionColor[2] = ec[2];
+
+		castShadows = shadows;
+
+		transparency = transp;
+		reflection = refl;
+
+		radius = r;
+		radius2 = r * r;
+
+	}
+
+};
+
+////END STRUCTS
+
+//// START HOST GLOBAL VARIABLES
+texture<uchar4, 2, cudaReadModeNormalizedFloat> cudaTex1; /// Background image
+texture<uchar4, 2, cudaReadModeNormalizedFloat> cudaTex2; /// Mesh diffuse texture
+texture<uchar4, 2, cudaReadModeNormalizedFloat> cudaTex3; /// Mesh normal map texture
+
+const int MAX_RAY_DEPTH = 4;
+//const int MAX_RAY_DEPTH = 3;
+
+size_t mesh_width = 0, mesh_height = 0;
+
+std::string execution_path;
+
+void* cudaSpheres;
+Sphere* spheres;
+
+const int NUM_SPHERES = 6;
+
+int NUM_TRIS = 0;
+int NUM_BVH = 0;
+int NUM_OCTREE = 0;
+
+void* cudaVerts;
+Vertex* vertData;
+
+void* cudaBVH;
+BVH* bvhData;
+
+void* cudaHitList;
+IntersectionResult* hitListData;
+
+//Player State
+bool spheresChanged;
+bool vertsChanged;
+
+//Note: To avoid transformations calculations, vertices are static and in pixel-space (scaled on load by OBJLoader using VERT_IMPORT_SCALE in Vertex.h)
+float cam_x = 0.0f; ///-X is left
+float cam_y = 0.0f; ///-Y is up
+float cam_z = 4000.0f;///-Z is forward
+
+//NOTE: light_mode [0 = direct-only, 1 = refl, 2 = refr, 3 refl+refr]
+int light_mode = 0;
+
+//Light position
+float light_x = 0.0f;
+float light_y = 0.0f;
+float light_z = 1000.0f;
+
+//Note: framesRefreshRequired is a counter which is used to ensure that rendering is never stopped part-way through a frame.
+int framesRefreshRequired = 0;
+
+//Scale factor applied to translations (e.g. Camera, light)
+float speed = 0.02f;
+
+//Note: frameStep = 0 forces full-frame rendering mode (disables sub-framing)
+int frameStep = (DEFERRED_REFRESH_SQUARE_DIM == 1) ? 0 : 1;
+
+//Note: List of specific key press states (as defined in GLFW callback function, i.e. key_callback)
+bool keys[13] = { 0 };
+
+//Time at program start
+std::chrono::system_clock::time_point WIN_CTIME = std::chrono::system_clock::now();
+
+//Note: oldTicks is a switch to alternate whether next frame is render or no-op, depending on elapsed time since program start
+int oldTicks = 0;
+
+//// END HOST GLOBAL VARIABLES
+
+//// START VULKAN SETUP
 
 const std::vector<const char*> validationLayers = {
 	"VK_LAYER_LUNARG_standard_validation" };
@@ -203,68 +395,14 @@ struct SwapChainSupportDetails {
 	std::vector<VkPresentModeKHR> presentModes;
 };
 
-struct Texel {
-	//stbi_uc r;
-	//stbi_uc g;
-	//stbi_uc b;
-	//stbi_uc a;
 
-	stbi_uc col[4] = { 255 };
+//// END VULKAN SETUP
 
-	Texel() {
-		//this->r = 0;
-		//this->g = 0;
-		//this->b = 0;
-		//this->a = 0;
-	}
+//// START CUDA DEVICE HELPERS
 
-};
-
-texture<uchar4, 2, cudaReadModeNormalizedFloat> cudaTex1;
-texture<uchar4, 2, cudaReadModeNormalizedFloat> cudaTex2;
-texture<uchar4, 2, cudaReadModeNormalizedFloat> cudaTex3;
-
-struct Sphere
-{
-	vec3 center;                           /// position of the sphere
-	float radius, radius2;                  /// sphere radius and radius^2
-	vec3 surfaceColor, emissionColor;      /// surface color and emission (light)
-	float transparency, reflection;         /// surface transparency and reflectivity
-	bool castShadows;
-	Sphere(
-		const vec3 &c,
-		const float &r,
-		const vec3 &sc,
-		const float &refl,
-		const float &transp,
-		const vec3 &ec,
-		const bool &shadows
-	) {
-
-		center[0] = c[0];
-		center[1] = c[1];
-		center[2] = c[2];
-
-		surfaceColor[0] = sc[0];
-		surfaceColor[1] = sc[1];
-		surfaceColor[2] = sc[2];
-
-		emissionColor[0] = ec[0];
-		emissionColor[1] = ec[1];
-		emissionColor[2] = ec[2];
-
-		castShadows = shadows;
-
-		transparency = transp;
-		reflection = refl;
-
-		radius = r;
-		radius2 = r * r;
-
-	}
-
-};
-
+/*
+ * 
+ */
 __device__ float magnitude(vec3 v) {
 	float total = sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
 	return total;
@@ -335,32 +473,9 @@ __device__ float hasIntersection(Sphere sphere, vec3 &rayorig, vec3 &raydir, flo
 	return true;
 }
 
-struct IntersectionResult{
-	/*
-	vec4 pos = { 0 };
-	vec4 normal = { 0 };
-	*/
-	float tmin = -1.0f;
-	vec3 pos = { 0 };
-	
-	vec3 normal = { 0 };
-	//vec3 tangent;
-	//vec3 bitangent;
+//// END CUDA DEVICE HELPERS
 
-	vec3 uv = { 0 };
-	vec4 col = { 0 };
-	int triIndex = -1;
-	int faceDir = 0;
-};
-
-size_t mesh_width = 0, mesh_height = 0;
-std::string execution_path;
-
-////START RAYTRACING
-
-
-//const int MAX_RAY_DEPTH = 3;
-const int MAX_RAY_DEPTH = 4;
+////START CUDA DEVICE RAYTRACING FUNCTIONS
 
 __device__ void blendCol(Texel* col, float factor, float r, float g, float b) {
 
@@ -1694,25 +1809,11 @@ __device__ void Raytrace<MAX_RAY_DEPTH>(Texel* col
 
 #endif
 
-/* Deal with verts in CUDA??
-__global__ void update_vertex_data(Vertex* verts, int numTris) {
-
-
-	unsigned int x_int = (blockIdx.x * blockDim.x + threadIdx.x) * 3;
-	unsigned int y_int = (blockIdx.y * blockDim.y + threadIdx.y) * 3;
-
-	if (x_int < numTris * 3 && ) {
-		verts[]
-	}
-
-}
-*/
-
 /// <summary>
 /// CUDA kernel function for ray-traced rendering into pixel array.
 /// </summary>
 /// <remarks>
-/// Depend
+/// Expects args depending on SHAPE_MODE compiled with (0 -> bvh, numBVh, verts, numTris OR 1 -> spheres, numSpheres)
 /// </remarks>
 ///<param name = "pixels">A texel array to write rendered pixels into</param>
 ///<param name = "bvh">The BVH AABB array, used if BVH enabled</param>
@@ -1770,8 +1871,9 @@ __global__ void get_raytraced_pixels(
 	   15       1  3
 	   16       3  1
 	*/
-
-	//Use compile-time directive for less processing because this doesn't need to be switchable behaviour
+	//Note: Use compile-time directive for less processing because this doesn't NEED to be interactive
+	//Note: Values set according to table above
+	//TODO: refactor into an array or switch-case
 #if DEFERRED_REFRESH_SQUARE_DIM==2
 	if (frame == 2 || frame == 4) {
 		x_int += 1;
@@ -1870,63 +1972,53 @@ __global__ void get_raytraced_pixels(
 
 }
 
-////END RAYTRACING
+//// END CUDA DEVICE RAYTRACING FUNCTIONS
 
-//HOST globals
-void* cudaSpheres;
-Sphere* spheres;
-const int NUM_SPHERES = 6;
 
-//const int NUM_TRIS = 5;
 
-int NUM_TRIS = 0;
-int NUM_BVH = 0;
-int NUM_OCTREE = 0;
 
-void* cudaVerts;
-Vertex* vertData;
 
-void* cudaBVH;
-BVH* bvhData;
 
-void* cudaHitList;
-IntersectionResult* hitListData;
 
-//Player State
-bool spheresChanged;
-bool vertsChanged;
-float cam_x = 0.0f;
-//-y is up
-float cam_y = 0.0f;
-float cam_z = 4000.0f;
 
-//0 = diffuse, 1 = refl, 2 = refr, 3 refl+refr
-int light_mode = 0;
 
-float light_x = 0.0f;
-float light_y = 0.0f;
-float light_z = 1000.0f;
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
 
-int framesRefreshRequired = 0;
 
-float speed = 0.02f;
 
-//render half the pixels in each dimension
-//TODO: hardcoded for a trail size=2
 
-//frameStep=0 forces full-frame rendering mode (disables sub-framing)
-int frameStep = (DEFERRED_REFRESH_SQUARE_DIM == 1) ? 0 : 1;
-//dimensions of refresh squares (square to get number of subframes)
-int defferedSquareDim = DEFERRED_REFRESH_SQUARE_DIM;
 
-bool keys[13] = { 0 };
 
-std::chrono::system_clock::time_point WIN_CTIME = std::chrono::system_clock::now();
-int oldTicks = 0;
 
-//See:
-//The callback function receives the keyboard key
-//platform-specific scancode, key action and modifier bits.
+
+
+
+//GLFW keyboard input callback function
+//recieves platform-specific scancode, key action and modifier bits
 void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
 	if (action == GLFW_RELEASE) {
