@@ -7,8 +7,8 @@
 * University assignment for final undergraduate project
 * This program is provided only as a demonstration of my software development experience
 
-## Video
-[![Youtube video of Vulkan/CUDA Real time ray tracing](https://img.youtube.com/vi/makjBE-XKcU/0.jpg)](https://www.youtube.com/watch?v=makjBE-XKcU)
+## Youtube Video
+<a target="_blank" href="https://www.youtube.com/watch?v=makjBE-XKcU"> <img src="https://img.youtube.com/vi/makjBE-XKcU/0.jpg"/> </a> 
 
 ## Setup
 
