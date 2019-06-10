@@ -72,9 +72,6 @@ int OBJLoader::loadRawVertexList(const char * fileName, Vertex** vertData) {
 		v1.color[2] = 0.5f;
 
 		if (uvAIdx < m_vTexCoords.size()) {
-			//v1.color[0] = 0.1f * (m_vTexCoords[uvAIdx].pos[0]);
-			//v1.color[1] = 0.1f * (m_vTexCoords[uvAIdx].pos[1]);
-
 			v1.uv[0] = (m_vTexCoords[uvAIdx].pos[0]);
 			v1.uv[1] = (m_vTexCoords[uvAIdx].pos[1]);
 		}
@@ -94,10 +91,6 @@ int OBJLoader::loadRawVertexList(const char * fileName, Vertex** vertData) {
 		v2.color[2]  = 0.5f;
 
 		if (uvBIdx < m_vTexCoords.size()) {
-			//v2.color[0] = 0.1f * (m_vTexCoords[uvBIdx].pos[0]);
-			//v2.color[1] = 0.1f * (m_vTexCoords[uvBIdx].pos[1]);
-
-
 			v2.uv[0] = (m_vTexCoords[uvBIdx].pos[0]);
 			v2.uv[1] = (m_vTexCoords[uvBIdx].pos[1]);
 		}
@@ -117,9 +110,6 @@ int OBJLoader::loadRawVertexList(const char * fileName, Vertex** vertData) {
 		v3.color[2] = 0.5f;
 
 		if (uvCIdx < m_vTexCoords.size()) {
-			//v3.color[0] = 0.1f * (m_vTexCoords[uvCIdx].pos[0]);
-			//v3.color[1] = 0.1f * (m_vTexCoords[uvCIdx].pos[1]);
-
 			v3.uv[0] = (m_vTexCoords[uvCIdx].pos[0]);
 			v3.uv[1] = (m_vTexCoords[uvCIdx].pos[1]);
 		}
@@ -143,6 +133,9 @@ int OBJLoader::loadRawVertexList(const char * fileName, Vertex** vertData) {
 		deltaUV2[0] = v3.uv[0] - v1.uv[0];
 		deltaUV2[0] = v3.uv[1] - v1.uv[1];
 
+		/*
+		//precomupted tangent/bitangent ot used by ray-tracer - consider deprecating code
+		
 		float r = 1.0f / (deltaUV1[0] * deltaUV2[1] - deltaUV1[1] * deltaUV2[0]);
 		vec3 tangent = { 0 };
 		tangent[0] = (deltaPos1[0] * deltaUV2[1] - deltaPos2[0] * deltaUV1[1])*r;
@@ -153,15 +146,15 @@ int OBJLoader::loadRawVertexList(const char * fileName, Vertex** vertData) {
 		bitangent[1] = (deltaPos2[1] * deltaUV1[0] - deltaPos1[1] * deltaUV2[0])*r;
 		bitangent[2] = (deltaPos2[2] * deltaUV1[0] - deltaPos1[2] * deltaUV2[0])*r;
 
-		v1.tangent[0] = tangent[0];
-		v1.tangent[1] = tangent[1];
-		v1.tangent[2] = tangent[2];
-		v1.bitangent[0] = bitangent[0];
-		v1.bitangent[1] = bitangent[1];
-		v1.bitangent[2] = bitangent[2];
+		//v1.tangent[0] = tangent[0];
+		//v1.tangent[1] = tangent[1];
+		//v1.tangent[2] = tangent[2];
+		//v1.bitangent[0] = bitangent[0];
+		//v1.bitangent[1] = bitangent[1];
+		//v1.bitangent[2] = bitangent[2];
 
 		// Gram-Schmidt orthogonalize
-		//ensure axis are orthogonal...
+		// ensure axis are orthogonal...
 		float dotnt = dot2(v1.normal, tangent);
 		tangent[0] = tangent[0] - v1.normal[0] * dotnt;
 		tangent[1] = tangent[1] - v1.normal[1] * dotnt;
@@ -171,7 +164,7 @@ int OBJLoader::loadRawVertexList(const char * fileName, Vertex** vertData) {
 		tangent[1] /= tanmag;
 		tangent[2] /= tanmag;
 
-		//handedness
+		// handedness
 		vec3 crossnt = { 0 };
 		cross(crossnt, v1.normal, tangent);
 		if (dot2(crossnt, bitangent) < 0.0f) {
@@ -179,21 +172,6 @@ int OBJLoader::loadRawVertexList(const char * fileName, Vertex** vertData) {
 			tangent[1] = tangent[1] * -1.0f;
 			tangent[2] = tangent[2] * -1.0f;
 		}
-
-		/*
-		v2.tangent[0] = tangent[0];
-		v2.tangent[1] = tangent[1];
-		v2.tangent[2] = tangent[2];
-		v2.bitangent[0] = bitangent[0];
-		v2.bitangent[1] = bitangent[1];
-		v2.bitangent[2] = bitangent[2];
-
-		v3.tangent[0] = tangent[0];
-		v3.tangent[1] = tangent[1];
-		v3.tangent[2] = tangent[2];
-		v3.bitangent[0] = bitangent[0];
-		v3.bitangent[1] = bitangent[1];
-		v3.bitangent[2] = bitangent[2];
 		*/
 
 		m_distinctVerts.push_back(v1);
@@ -205,15 +183,13 @@ int OBJLoader::loadRawVertexList(const char * fileName, Vertex** vertData) {
 	int size = static_cast<int>(m_distinctVerts.size());
 	std::cout << "Loading " << size << " vertices (scale=" << VERT_IMPORT_SCALE << "x) from " << fileName << std::endl;
 
-	//return size
 	return size;
 }
 
 void OBJLoader::loadVertices(Vertex* vertData, int numVerts) {
 
-
-	//TODO: do I understand this?
-	//vertData is now an array of pointers?
+	//vertData is now an array of pointers to vertex objects
+	//Created by copy constructor?
 	for (int v = 0; v < numVerts; v++) {
 		vertData[v] = m_distinctVerts[v];
 	}
@@ -224,11 +200,8 @@ int OBJLoader::putVertsInBVH(Vertex* vertData, int numVerts, BVH_BAKE* bvh, int 
 	int currentRedirect = -1;
 	int addedTris = 0;
 	std::vector<int> addedTriIdxList = std::vector<int>();
-	float expanded = 0.0f;
 
 	for (int tri = 0; tri < numVerts; tri += 3) {
-
-		//std::cout << "TESTING " << tri << "-> " << bvh->min[0] << " < " << vertData[tri + 0].pos[0] << " < " << bvh->max[0] << std::endl;
 
 		//can expand to fit first triangle which does not entirely fit
 		//subsequent triangles must strictly fit
@@ -272,7 +245,8 @@ int OBJLoader::putVertsInBVH(Vertex* vertData, int numVerts, BVH_BAKE* bvh, int 
 
 		bool triIntersects = false;
 #if NO_LOSS_BVH == 1
-		//triangle might intersect bvh but is so big that no verts are actually within the bvh!
+		
+		//NOTE: triangle might intersect bvh but is so big that no verts are actually within the bvh!
 		
 		if (!containsPartTri) {
 			vec3 boxhalfsize = { 0 };
@@ -290,9 +264,8 @@ int OBJLoader::putVertsInBVH(Vertex* vertData, int numVerts, BVH_BAKE* bvh, int 
 		if (containsPartTri || triIntersects) {
 			bool addedAlready = false;
 
-			//Allow adding multiple times!!!
-			
-			
+			//NOTE: Allow adding multiple times
+			// Just check in order to keep track of the number of unique added tris
 			for (int a = 0; a < addedTriIdxList.size(); a++) {
 				if (addedTriIdxList[a] == tri) {
 					addedAlready = true;
@@ -300,52 +273,11 @@ int OBJLoader::putVertsInBVH(Vertex* vertData, int numVerts, BVH_BAKE* bvh, int 
 				}
 			}
 			
+			if (!addedAlready) addedTris++;
 
-			//if (!addedAlready || true) {
-
-				if (!addedAlready) addedTris++;
-
-				//add to bvh current "chunk"
-				bvh->triIdx.push_back(tri);
-				addedTriIdxList.push_back(tri);
-					
-				//NOTE: expanding bvh solves issue of tri clipping
-				/*
-					if (!containsWholeTri && depth == 1 && expanded < BVH_EXPAND_LIMIT) {
-					//expand BVH box if needed
-					float maxX = std::max(vertData[tri].pos[0], std::max(vertData[tri + 1].pos[0], vertData[tri + 2].pos[0]));
-					if (bvh->max[0] < maxX) {
-						expanded += maxX - bvh->max[0];
-						bvh->max[0] = maxX;
-					}
-					float maxY = std::max(vertData[tri].pos[1], std::max(vertData[tri + 1].pos[1], vertData[tri + 2].pos[1]));
-					if (bvh->max[1] < maxY) {
-						expanded += maxY - bvh->max[1];
-						bvh->max[1] = maxY;
-					}
-					float maxZ = std::max(vertData[tri].pos[2], std::max(vertData[tri + 1].pos[2], vertData[tri + 2].pos[2]));
-					if (bvh->max[2] < maxZ) {
-						expanded += maxZ - bvh->max[2];
-						bvh->max[2] = maxZ;
-					}
-					float minX = std::min(vertData[tri].pos[0], std::min(vertData[tri + 1].pos[0], vertData[tri + 2].pos[0]));
-					if (bvh->min[0] > minX) {
-						expanded += bvh->min[0] - minX;
-						bvh->min[0] = minX;
-					}
-					float minY = std::min(vertData[tri].pos[1], std::min(vertData[tri + 1].pos[1], vertData[tri + 2].pos[1]));
-					if (bvh->min[1] > minY) {
-						expanded += bvh->min[1] - minY;
-						bvh->min[1] = minY;
-					}
-					float minZ = std::min(vertData[tri].pos[2], std::min(vertData[tri + 1].pos[2], vertData[tri + 2].pos[2]));
-					if (bvh->min[2] > minZ) {
-						expanded += bvh->min[2] - minZ;
-						bvh->min[2] = minZ;
-					}
-				}
-				*/
-			//}
+			//add to bvh current "chunk"
+			bvh->triIdx.push_back(tri);
+			addedTriIdxList.push_back(tri);
 		}
 	}
 
@@ -353,7 +285,6 @@ int OBJLoader::putVertsInBVH(Vertex* vertData, int numVerts, BVH_BAKE* bvh, int 
 		
 		if (addedTris > 0) {
 
-			//TODO: also do this if bvh expanded
 			if (bvh->children.size() == 0) {
 				//Create or Recalculate child octrees
 				bvh->refreshChildren();
@@ -406,7 +337,6 @@ int OBJLoader::countBVHNeeded(Vertex* vertData, int numVerts) {
 	}
 
 	//divide each dimension by boxsize
-
 	vec3 bvhSpan = { 0 };
 	bvhSpan[0] = vertData[maxVert[0]].pos[0] - vertData[minVert[0]].pos[0];
 	bvhSpan[1] = vertData[maxVert[1]].pos[1] - vertData[minVert[1]].pos[1];
@@ -423,13 +353,13 @@ int OBJLoader::countBVHNeeded(Vertex* vertData, int numVerts) {
 	float maxSpan = (bvhSpan[0] > bvhSpan[1]) ? bvhSpan[0] : bvhSpan[1];
 	maxSpan = (maxSpan > bvhSpan[2]) ? maxSpan : bvhSpan[2];
 	
-	//TODO: finetune -> large impact on octree balance and thus performance
-	//float bvhBoxDim = (BVH_BOX_SIZE > maxSpan) ? BVH_BOX_SIZE : maxSpan / 5;
-	//float bvhBoxDim = maxSpan / 4;
-
-	//cornell tune
+	//NOTE: 2048 is somewhat tuned for Cornell box
 	float bvhBoxDim = 2048;
 
+	//TODO: automatic selection needs finetuning for robust results -> large impact on octree balance and thus performance
+	//float bvhBoxDim = (BVH_BOX_SIZE > maxSpan) ? BVH_BOX_SIZE : maxSpan / 5;
+	//float bvhBoxDim = maxSpan / 4;
+	
 	std::cout << "SPAN:" << bvhBoxDim << std::endl;
 
 	while (padding[0] >= bvhBoxDim) {
@@ -474,24 +404,14 @@ int OBJLoader::countBVHNeeded(Vertex* vertData, int numVerts) {
 				m_BVH[currBVH].max[1] = bvhpaddedmin[1] + ((y + 1) * bvhBoxDim);
 				m_BVH[currBVH].max[2] = bvhpaddedmin[2] + ((z + 1) * bvhBoxDim);
 
-				//std::cout << "BVHMIN->(" << m_BVH[currBVH].min[0] << "," << m_BVH[currBVH].min[1] << "," << m_BVH[currBVH].min[2] << ")" << std::endl;
-				//std::cout << "BVHMAX->(" << m_BVH[currBVH].max[0] << "," << m_BVH[currBVH].max[1] << "," << m_BVH[currBVH].max[2] << ")" << std::endl;
-
 				currBVH++;
 			}
 		}
 	}
 
-	//int currentRedirect = -1;
-	//int chunks = 0;
-
 	int addedTris = 0;
 
 	std::cout << "Verts to BVH:" << numVerts << std::endl;
-
-	//bool expanded = 0.0f;
-
-	//std::vector<int> addedTriIdxList = std::vector<int>();
 
 	//foreach bvh, add un-added verts that intersect bvh
 	//aka. fill bvh vert lists
@@ -502,12 +422,10 @@ int OBJLoader::countBVHNeeded(Vertex* vertData, int numVerts) {
 	}
 
 	std::cout << "Added tris to BVH: " << addedTris << std::endl;
-	//std::cout << "BVH chunks: " << chunks << std::endl;
 
 	//return totalnumber of non-zero-containing bvh
 	int numFilledBVH = 0;
 
-	//NOTE: m_BVH may contain more than totalMaxnumBVH due to chunking!
 	for (int i = 0; i < m_BVH.size(); i++) {
 		if (m_BVH[i].hasVerts()) numFilledBVH++;
 	}
@@ -541,28 +459,20 @@ int OBJLoader::putBVH(BVH* bvhData, BVH_BAKE* bvh, Vertex* vertData, int numVert
 
 		bvhData[bvhIdx].depth = depth;
 
-		//std::cout << depth << ": BVH->max(" << bvhData[bvhIdx].max[0] << "," << bvhData[bvhIdx].max[1] << "," << bvhData[bvhIdx].max[2] << ")" << std::endl;
-		//std::cout << depth << ": BVH->min(" << bvhData[bvhIdx].min[0] << "," << bvhData[bvhIdx].min[1] << "," << bvhData[bvhIdx].min[2] << ")" << std::endl;
-
 		int numTrisToAdd = static_cast<int>(bvh->triIdx.size());
 
 		std::cout << "Tris to add:" << numTrisToAdd << std::endl;
 
+		//NOTE: previously tried to add copies of the same BVH to account for this by "chunking" but not worth the complexity!
+		//Currently, select a sensible value according to the triangle density of the scene and change BVH_CHUNK_SIZE
 		if (numTrisToAdd > BVH_CHUNK_SIZE) throw new std::exception("Tried to add too many tris to BVH box");
 
-		//int requiredtriLists = (numTrisToAdd <= BVH_CHUNK_SIZE) ? 1 : static_cast<int>(ceilf(static_cast<float>(numTrisToAdd) / static_cast<float>(BVH_CHUNK_SIZE)));
-
-		//bvhData[bvhIdx].numTris = (requiredtriLists == 1) ? numTrisToAdd : BVH_CHUNK_SIZE;
 		bvhData[bvhIdx].numTris = numTrisToAdd;
-		//for (int chunk = 0; chunk < requiredtriLists; chunk++) {
 
 			for (int t = 0; t < numTrisToAdd; t++) {
-			//for (int t = 0; t < min(BVH_CHUNK_SIZE, numTrisToAdd); t++) {
-				//std::cout << "Adding " << t << "=" << bvh->triIdx[t] << std::endl;
+			
 				bvhData[bvhIdx].triIdx[t] = bvh->triIdx[t];
 			}
-
-		//}
 
 		added++;
 
@@ -594,7 +504,7 @@ int OBJLoader::createBVH(BVH* bvhData, int numBVH, Vertex* vertData, int numVert
 	int added = 0;
 	int lastAdded = -1;
 	int octree = 0;
-	//NOTE: m_BVH may contain more than totalMaxNumBVH due to chunking!
+
 	for (int i = 0; i < m_BVH.size(); i++) {
 
 		int totalAdded = putBVH(bvhData, &m_BVH[i], vertData, numVerts, added, 1);
@@ -843,6 +753,7 @@ bool OBJLoader::myMTLLoader(const char *mainName, const char *filename)
 	//04/05/19
 	//Commented material import code
 	//unused in the raytracer and causes compiler warnings with using %s in sscan_s
+	//NOTE: materials will are a desirable feature for full OBJ support in the future; hence keeping code ready to go
 	while (!fin.eof())
 
 	{
@@ -1058,6 +969,8 @@ int OBJLoader::lookupMaterial(char *matName)
 //http://fileadmin.cs.lth.se/cs/Personal/Tomas_Akenine-Moller/code/
 /////////////////////////////////////////////////////////////////////////////
 
+//// START TRI BOX OVERLAP CODE
+
 bool OBJLoader::planeBoxOverlap(vec3 &normal, vec3 &vert, vec3 &maxbox)
 {
 
@@ -1227,4 +1140,4 @@ bool OBJLoader::triBoxOverlap(vec3 &boxcenter, vec3 &boxhalfsize, vec4 &vert1, v
 	return true;   //overlap!
 }
 
-
+//// END TRI BOX OVERLAP CODE

@@ -130,6 +130,8 @@
 //slower visual presentation when CPU prints with cout (but the frames are still rendered by CUDA as fast)
 #define PRINT_FPS 0
 
+#define ZFAR_TRIANGLE_RT -900.0f
+
 //bump mapping OR normal mapping (normal mapping will override if both set)
 #define NORMAL_MAPPING 0
 #define BUMP_MAPPING 1
@@ -147,6 +149,7 @@
  *	#define DEFERRED_REFRESH_SQUARE_DIM 2
  */
 #define DEFERRED_REFRESH_SQUARE_DIM 2
+
 //Enable/disable vulkan validation (prints Vulkan validation errors in the console window)
 #define VULKAN_VALIDATION 0
 //#define VULKAN_VALIDATION 1
@@ -155,6 +158,8 @@
 
 //// START STRUCTS
 
+// Wrapper for pixel colour used for writing ray-traced rendering output 
+//(as opposed to a rasterizer which writes fragments to buffer in programmable shader)
 struct Texel {
 	stbi_uc col[4] = { 255, 255, 255, 255 };
 
@@ -162,7 +167,7 @@ struct Texel {
 	}
 };
 
-
+// Used for triangle ray-tracing
 struct IntersectionResult {
 	float tmin = -1.0f;
 	vec3 pos = { 0 };
@@ -174,13 +179,13 @@ struct IntersectionResult {
 	int faceDir = 0;
 };
 
-
+// Used only for sphere ray-tracing
 struct Sphere
 {
-	vec3 center;                           /// position of the sphere
-	float radius, radius2;                  /// sphere radius and radius^2
-	vec3 surfaceColor, emissionColor;      /// surface color and emission (light)
-	float transparency, reflection;         /// surface transparency and reflectivity
+	vec3 center;                           // position of the sphere
+	float radius, radius2;                  // sphere radius and radius^2
+	vec3 surfaceColor, emissionColor;      // surface color and emission (light)
+	float transparency, reflection;         // surface transparency and reflectivity
 	bool castShadows;
 	Sphere(
 		const vec3 &c,
@@ -226,10 +231,10 @@ texture<uchar4, 2, cudaReadModeNormalizedFloat> cudaTex3; /// Mesh normal map te
 const int MAX_RAY_DEPTH = 4;
 //const int MAX_RAY_DEPTH = 3;
 
-size_t mesh_width = 0, mesh_height = 0;
-
+// Stores path to directory which program is running from; used to find Vulkan shaders from local directory
 std::string execution_path;
 
+//GPU/CPU sphere lists
 void* cudaSpheres;
 Sphere* spheres;
 
@@ -239,23 +244,26 @@ int NUM_TRIS = 0;
 int NUM_BVH = 0;
 int NUM_OCTREE = 0;
 
+//GPU/CPU vertex data lists
 void* cudaVerts;
 Vertex* vertData;
 
+//GPU/CPU bvh data lists
 void* cudaBVH;
 BVH* bvhData;
 
+//GPU/CPU rayhit data lists
 void* cudaHitList;
 IntersectionResult* hitListData;
 
-//Player State
+//Flags to signal updated data to send from CPU (host) to GPU (device)
 bool spheresChanged;
 bool vertsChanged;
 
 //Note: To avoid transformations calculations, vertices are static and in pixel-space (scaled on load by OBJLoader using VERT_IMPORT_SCALE in Vertex.h)
-float cam_x = 0.0f; ///-X is left
-float cam_y = 0.0f; ///-Y is up
-float cam_z = 4000.0f;///-Z is forward
+float cam_x = 0.0f;		//-X is left
+float cam_y = 0.0f;		//-Y is up
+float cam_z = 4000.0f;	//-Z is forward
 
 //NOTE: light_mode [0 = direct-only, 1 = refl, 2 = refr, 3 refl+refr]
 int light_mode = 0;
@@ -286,6 +294,8 @@ int oldTicks = 0;
 //// END HOST GLOBAL VARIABLES
 
 //// START VULKAN SETUP
+
+//Boilerplate code from the Nvidia CUDA/Vulkan sample
 
 const std::vector<const char*> validationLayers = {
 	"VK_LAYER_LUNARG_standard_validation" };
@@ -400,29 +410,30 @@ struct SwapChainSupportDetails {
 
 //// START CUDA DEVICE HELPERS
 
-/*
- * 
- */
+//Device function to get the magnitude from a float[3] vector
 __device__ float magnitude(vec3 v) {
 	float total = sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
 	return total;
 
 }
 
+//Device function to get the dot product of two float[3] vectors
 __device__ float dot(vec3 l, vec3 r) {
 	return (l[0] * r[0]) + (l[1] * r[1]) + (l[2] * r[2]);
 }
 
-
+//Device function to get the projection of a float[3] vector onto a given world-space axis (X,Y,Z)
+//Used for transforming to world-space
 __device__ float dotAxis(vec3 l, int axis, float dir) {
 
 	return 
 		(l[0] * ((axis ==0)? dir : 0))
 		+ (l[1] * ((axis == 1) ? dir : 0))
 		+ (l[2] * ((axis == 2) ? dir : 0));
-
 }
 
+//Return the specified axis of the cross product between two given float[3] vectors
+//This per-axis cross product is used because CUDA device function cannot return a vector, so cross one axis at a time
 __device__ float cross(int axis, vec3 a, vec3 b) {
 	//cx = aybz - azby
 	if (axis == 0) return a[1] * b[2] - a[2] * b[1];
@@ -435,6 +446,7 @@ __device__ float cross(int axis, vec3 a, vec3 b) {
 	return 0.0f;
 }
 
+//calculate the t result of a ray-sphere intersection
 __device__ float intersect(Sphere sphere, vec3 &rayorig, vec3 &raydir)
 {
 	vec3 l = { 0 };
@@ -455,6 +467,9 @@ __device__ float intersect(Sphere sphere, vec3 &rayorig, vec3 &raydir)
 	return tmp1;
 }
 
+//Check whether the ray reaches and intersects the sphere
+//Used to offer early-out to the algorithm
+//Note: Debateable whether such an early-out positively affects performance in GPGPU computing...
 __device__ float hasIntersection(Sphere sphere, vec3 &rayorig, vec3 &raydir, float maxDist)
 {
 	vec3 l = { 0 };
@@ -479,7 +494,8 @@ __device__ float hasIntersection(Sphere sphere, vec3 &rayorig, vec3 &raydir, flo
 
 __device__ void blendCol(Texel* col, float factor, float r, float g, float b) {
 
-	//normalise light ("HDR-like")
+	//clamp intensity into the range 0-255
+	//scales all colours to "preserve" colour differences
 	float largest = b;
 	if (r > g) {
 		if (r > b) {
@@ -494,28 +510,23 @@ __device__ void blendCol(Texel* col, float factor, float r, float g, float b) {
 
 	float lightOverspill = largest - 255;
 	if (lightOverspill < 0) lightOverspill = 0;
-	/*
-	col->g = (col->g  * (1.0f - factor)) + (factor * (g- lightOverspill));
-	col->b = (col->b * (1.0f - factor)) + (factor * (b-lightOverspill));
-	col->r = (col->r * (1.0f - factor)) + (factor *  (r-lightOverspill));
-	*/
 
-
+	//linear combination
+	//Note: uses b8g8r8a8_unorm format
 	col->col[0] = (col->col[0] * (1.0f - factor)) + (factor * (b - lightOverspill));
 	col->col[1] = (col->col[1] * (1.0f - factor)) + (factor * (g - lightOverspill));
 	col->col[2] = (col->col[2] * (1.0f - factor)) + (factor *  (r - lightOverspill));
-
+	//Unused alpha channel
 	//col->col[3] = 0xFFFFFFFF;
-
 }
 
 __device__ void setCol(Texel* col, float r, float g, float b) {
 
-	//TODO: b8g8r8a8_unorm format supported on 
-
+	//Note: uses b8g8r8a8_unorm format
 	col->col[0] = b;
 	col->col[1] = g;
 	col->col[2] = r;
+	//Unused alpha channel
 	//col->col[3] = 0xFFFFFFFF;
 }
 
@@ -604,18 +615,13 @@ __device__ void intersectTris(int* vertIdx, Vertex* verts, IntersectionResult* o
 		V3[2] = verts[vertIdx[tri]+0].pos[2];
 #endif
 
-		/* //IF ALL VERTS ARE BEHIND CAMERA
-		if (V1[2] > 0) V1[2] = -1.0f;
-		if (V2[2] > 0) V2[2] = -1.0f;
-		if (V3[2] > 0) V3[2] = -1.0f;
-		if (V1[2] == -1.0f && V2[2] == -1.0f && V3[2] == -1.0f) continue;
-		*/
-
-		//Edge1 = V2-v1
-		//Edge2 = V3-V1
-		//h=raydir.cross(Edge2)
-		//A=Edge1.dot(h)
-		//IF A < Epsilon &&  A > -Epsilon (no hit)
+		//Algorithm:
+		//	Edge1 = V2-v1
+		//	Edge2 = V3-V1
+		//	h=raydir.cross(Edge2)
+		//	A=Edge1.dot(h)
+		//	IF A < Epsilon &&  A > -Epsilon THEN no hit
+		//	ELSE hit
 
 		vec3 edge1 = { 0 };
 		edge1[0] = V2[0] - V1[0];
@@ -724,10 +730,8 @@ __device__ void intersectTris(int* vertIdx, Vertex* verts, IntersectionResult* o
 			(verts[closestTri + 1].normal[2] * minV) +
 			(verts[closestTri + 2].normal[2] * minU);
 
-		//bugfix -> Blender UV co-ordinate system has flipped U compared to tex2D
 #if UV_FILTERING_ENABLED == 1
-		
-			//filtersize blurs normal map (to quantize interpolation and reduce noise)
+		//filtersize blurs normal map (to quantize interpolation and reduce noise)
 		outhit->uv[0] = roundf((
 			(verts[closestTri + 0].uv[0] * (1.0 - minV - minU)) +
 			(verts[closestTri + 1].uv[0] * minV) +
@@ -740,7 +744,6 @@ __device__ void intersectTris(int* vertIdx, Vertex* verts, IntersectionResult* o
 			))*UV_FILTER_SIZE) / UV_FILTER_SIZE;
 
 #else
-		//filtersize blurs normal map (to quantize interpolation and reduce noise)
 		outhit->uv[0] = (
 			(verts[closestTri + 0].uv[0] * (1.0 - minV - minU)) +
 			(verts[closestTri + 1].uv[0] * minV) +
@@ -752,47 +755,11 @@ __device__ void intersectTris(int* vertIdx, Vertex* verts, IntersectionResult* o
 			(verts[closestTri + 2].uv[1] * minU)
 			)));
 #endif
-		//float uvmag = magnitude(outhit->uv);
-		//outhit->uv[0] = outhit->uv[0] / WIDTH;
-		//outhit->uv[1] = outhit->uv[1] / HEIGHT;
-
-		//outhit->normal[0] = -outhit->normal[0];
-		//outhit->normal[1] = -outhit->normal[1];
-		//outhit->normal[2] = -outhit->normal[2];
-
 		outhit->triIndex = closestTri;
 		outhit->faceDir = faceDir;
 		outhit->tmin = minT;
 
-		//tangent axis is stored in first vertex only
-		//outhit->tangent[0] = verts[closestTri + 0].tangent[0];
-		//outhit->tangent[1] = verts[closestTri + 0].tangent[1];
-		//outhit->tangent[2] = verts[closestTri + 0].tangent[2];
-
-		//bitangent axis is stored in first vertex only
-		//outhit->bitangent[0] = verts[closestTri + 0].bitangent[0];
-		//outhit->bitangent[1] = verts[closestTri + 0].bitangent[1];
-		//outhit->bitangent[2] = verts[closestTri + 0].bitangent[2];
-
-
 	}
-	/*
-		outhit->pos[0] =
-			(verts[closestTri + 0].pos[0] * (1.0 - minV - minU)) +
-			(verts[closestTri + 1].pos[0] * minV) +
-			(verts[closestTri + 2].pos[0] * minU)
-			;
-		outhit->pos[1] =
-			(verts[closestTri + 0].pos[1] * (1.0 - minV - minU)) +
-			(verts[closestTri + 1].pos[1] * minV) +
-			(verts[closestTri + 2].pos[1] * minU)
-			;
-		outhit->pos[2] =
-			(verts[closestTri + 0].pos[2] * (1.0 - minV - minU)) +
-			(verts[closestTri + 1].pos[2] * minV) +
-			(verts[closestTri + 2].pos[2] * minU)
-			;
-	*/
 }
 
 template<int depth>
@@ -832,11 +799,8 @@ __device__ void intersectBVH(BVH* bvh
 	raydir[1] = 1.0f / raydir[1];
 	raydir[2] = 1.0f / raydir[2];
 
-	//float minT = 99999.9f;
-
 	int nextOctree = -1;
-	//backwards because the octree is biased in the negative direction
-	//TODO: this would cause depth failures when facing the other direction!
+
 	for (int i = 0; i <= numBoxes-1; i++) {
 
 		//PROBLEM: where are the root octrees? Sparsely populated...
@@ -889,12 +853,15 @@ __device__ void intersectBVH(BVH* bvh
 				, ray_x, ray_y, ray_z
 				, maxDist);
 
-			//if (outhit->triIndex != -1) return;
+			//TODO: can use this early-out if we can ensure finding the front-most triangle first
+			//Note: Currently, intersectTris checks depth so all intersected triangles must be tested for correct occlusion!
+			///if (outhit->triIndex != -1) return;
 
 		}
 	}
 }
 
+//Same algorithm, but instead of recursing, it intersects ray-triangles when BVH box is intersected
 template<>
 __device__ void intersectBVH<MAX_BVH_DEPTH>(BVH* bvh
 	, int numBoxes
@@ -915,11 +882,7 @@ __device__ void intersectBVH<MAX_BVH_DEPTH>(BVH* bvh
 	raydir[1] = 1.0f / raydir[1];
 	raydir[2] = 1.0f / raydir[2];
 
-	//float minT = 99999.9f;
-
 	int nextOctree = -1;
-	//backwards because the octree is biased in the negative direction
-	//TODO: this would cause depth failures when facing the other direction!
 	for (int i = 0; i <= numBoxes - 1; i++) {
 
 		//PROBLEM: where are the root octrees? Sparsely populated...
@@ -987,6 +950,7 @@ __device__ void intersectBVH<MAX_BVH_DEPTH>(BVH* bvh
 
 #if SHAPE_MODE==0
 
+//Raytraced rendering algorithm - colour the given texel based on ray-tracing results
 template<int depth>
 __device__ void RaytraceTris(
 	Texel* col
@@ -1468,6 +1432,12 @@ __device__ void RaytraceTris(
 	}
 }
 
+
+//Raytraced rendering algorithm - colour the given texel based on ray-tracing results
+//This is called when the "recursion" reaches maximum depth
+//Note: "deterministic ray termination" is a statistically-biased rendering technique
+//TODO: add russian roulette ray-termination algorithm to account for lost energy
+//NOTE: specifically, must be implemented in the non-max-ray-depth template for RaytraceTris<>(...)
 template<>
 __device__ void RaytraceTris<MAX_RAY_DEPTH>(
 	Texel* col
@@ -1486,22 +1456,25 @@ __device__ void RaytraceTris<MAX_RAY_DEPTH>(
 
 	float4 bgTex = tex2D(cudaTex3, (x1 + (WIDTH / 2)) / WIDTH, (y1 + (HEIGHT / 2)) / HEIGHT);
 
+	
 	//TODO maintain "russian roulette" probability factor to adjust energy here
-	//Terminate the ray and add background color
+	//Note: can use setCol and a bright colour to debug where the algorithm reaches max_depth (e.g. in reflections)
+
+	//Terminate the ray recursion and add background color
 	blendCol(col
 		, factor
 		, bgTex.x
 		,  bgTex.y
 		,  bgTex.z
 	);
-	
-	//setCol(col
-		//, 255, 255, 0);
 
 	return;
 }
 
 #elif SHAPE_MODE==1
+
+//Deprecated sphere ray-tracing code, ported from CPU ray-tracing prototype in an early prototype for the 
+//CUDA/Vulkan ray-traced rendering pipeline as used in triangle ray-tracing
 
 const int NUM_LIGHTS = 2;
 
@@ -1515,10 +1488,6 @@ __device__ void Raytrace(Texel* col
 	, int bouncedFromSphereIndex
 	, float blendR, float blendG, float blendB)
 {
-	//set colours by screen position
-	//setCol(col, ray_x, ray_y, ray_x / ray_y);
-	//setCol(col, spheres[0].surfaceColor.r, spheres[0].surfaceColor.g, spheres[0].surfaceColor.b);
-	//return;
 
 	vec3 raydir = { 0 };
 
@@ -1543,7 +1512,6 @@ __device__ void Raytrace(Texel* col
 	int selfIndex = -1;
 	// find intersection of this ray with the sphere in the scene
 	for (unsigned i = 0; i < numSpheres; ++i) {
-		//if (i != bouncedFromSphereIndex) {
 		float t = intersect(spheres[i], rayorig, raydir);
 		if (t != -1.0f) {
 			if (t < tnear) {
@@ -1552,13 +1520,11 @@ __device__ void Raytrace(Texel* col
 				selfIndex = i;
 			}
 		}
-		//}
 	}
 
 	//no intersection = background
 	if (!sphere) {
 		//set background only on primary rays
-
 		if (depth == 1) setCol(col, 30, 30, 80);
 		//NOTE: blend is slow!
 		else {
@@ -1579,8 +1545,7 @@ __device__ void Raytrace(Texel* col
 	phit[1] = orig_y + (raydir[1] * tnear);
 	phit[2] = orig_z + (raydir[2] * tnear);
 
-	//teleport self-refracted ray
-
+	//Note: teleport self-refracted ray
 	if (selfIndex == bouncedFromSphereIndex) {
 
 		Raytrace<depth + 1>(col
@@ -1593,8 +1558,6 @@ __device__ void Raytrace(Texel* col
 			blendR, blendG, blendB);
 		return;
 	}
-
-
 
 	//Get normal at hit (and normalize it)
 	vec3 nhit;
@@ -1809,6 +1772,7 @@ __device__ void Raytrace<MAX_RAY_DEPTH>(Texel* col
 
 	//set pixel to red to visualise max_depth rays
 	//setCol(col, 255, 0, 0);
+
 	setCol(col, col->col[0]*factor, col->col[1]*factor, col->col[2]*factor);
 
 	return;
@@ -1934,45 +1898,25 @@ __global__ void get_raytraced_pixels(
 			, 1.0f, 1.0f, 1.0f);
 
 #elif SHAPE_MODE == 0
-		//START PERSPECTIVE MATRIX
-//TODO: calculate on host and copy to CUDA device once/when changed
 
-	//aspect ratio: x/y
-
-		const float zFar = -900;
-
-		//float cam_x2 = (cam_x + (WIDTH / -2.0f)) + x;
-		//float cam_y2 = (cam_y + (HEIGHT / -2.0f)) + y;
-		/*
-		Abandoned attempt to odraw light without ray-tracing it
-		float lightDist = sqrtf((cam_x2 - light_x)*(cam_x2 - light_x) + (cam_y2 - light_y)*(cam_y2 - light_y));
-		
-		if (lightDist < 15.0f) {
-			pixels[(y_int * WIDTH) + (x_int)].col[0] = 255;
-			pixels[(y_int * WIDTH) + (x_int)].col[1] = 255;
-			pixels[(y_int * WIDTH) + (x_int)].col[2] = 255;
-		}
-		else {
-		*/
-			RaytraceTris<1>(
-				//image
-				&pixels[(y_int * WIDTH) + (x_int)]
-				//factor to keep old color
-				, factor
-				//bvh
-				, bvh, numBVH
-				//verts
-				, verts, numTris
-				//raydir (also acts as cam projection where smaller z = larger fov)
-				, x, y, zFar
-				//cam pos
-				, cam_x, cam_y, cam_z
-				, light_x, light_y, light_z
-				, &hitlist[(raw_y * (WIDTH / (squareDim))) + (raw_x)]
-				, light_mode
-				, x, y
-				);
-		//}
+		RaytraceTris<1>(
+			//image
+			&pixels[(y_int * WIDTH) + (x_int)]
+			//factor to keep old color
+			, factor
+			//bvh
+			, bvh, numBVH
+			//verts
+			, verts, numTris
+			//raydir (also acts as cam projection where smaller z = larger fov)
+			, x, y, ZFAR_TRIANGLE_RT
+			//cam pos
+			, cam_x, cam_y, cam_z
+			, light_x, light_y, light_z
+			, &hitlist[(raw_y * (WIDTH / (squareDim))) + (raw_x)]
+			, light_mode
+			, x, y
+			);
 
 #endif
 	}
@@ -1981,51 +1925,11 @@ __global__ void get_raytraced_pixels(
 
 //// END CUDA DEVICE RAYTRACING FUNCTIONS
 
-
-
-
-
-
-
-
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// TODO: got to here when doing comments (still need to remove useless comments, too).
-
-
-
-
-
-
-
-
-
+//// START GLFW KEY INPUT HANDLER
 
 //GLFW keyboard input callback function
 //recieves platform-specific scancode, key action and modifier bits
+//Useful information: https://www.glfw.org/docs/latest/input_guide.html#input_key
 void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
 	if (action == GLFW_RELEASE) {
@@ -2066,7 +1970,7 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
 		case (GLFW_KEY_C):
 			keys[11] = false;
 			break;
-		//toggle key is reset when handled
+		//NOTE: just a reminder that toggle key is reset when handled, so don't need to reset when key is released
 		//case (GLFW_KEY_TAB):
 			//keys[12] = false;
 			//break;
@@ -2121,6 +2025,14 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
 	}
 }
 
+//// END GLFW KEY INPUT HANDLER
+
+
+//// START CUDA/VULKAN APP CODE
+
+//vulkanCudaApp class is a boilerplate class which contains all functions for setting up and running the CUDA/Vulkan interop. application code
+//It has been adapted from the original Nvidia CUDA/Vulkan example code
+//One major difference is the removal of all Vulkan geometry and rasterization (replaced by blit of raytraced pixels)
 class vulkanCudaApp {
 public:
 	void run() {
@@ -2199,7 +2111,7 @@ private:
 
 	PFN_vkGetPhysicalDeviceProperties2 fpGetPhysicalDeviceProperties2;
 
-	// CUDA stuff
+	// CUDA variables
 	cudaExternalMemory_t cudaExtMemPixelBuffer;
 	cudaExternalSemaphore_t cudaExtCudaUpdateVkVertexBufSemaphore;
 	cudaExternalSemaphore_t cudaExtVkUpdateCudaVertexBufSemaphore;
@@ -2383,7 +2295,7 @@ private:
 		createImageViews();
 		createRenderPass();
 		createDescriptorSetLayout();
-		//createGraphicsPipeline();
+		//DO NOT createGraphicsPipeline();
 		createFramebuffers();
 		createCommandPool();
 
@@ -2743,11 +2655,7 @@ private:
 		createInfo.imageExtent = extent;
 		createInfo.imageArrayLayers = 1;
 		createInfo.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-
-		//// my crap
-		//createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
-		//createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-
+		
 
 		QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
 		uint32_t queueFamilyIndices[] = { (uint32_t)indices.graphicsFamily,
@@ -2866,7 +2774,8 @@ private:
 			VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
 
 
-		//TODO: not
+		//TODO: Currently not using CUDA-Vulkan vertex binding 
+		//Note: original example used Vulkan to rasterize and CUDA to deform geometry)
 		VkVertexInputBindingDescription bindingDescription; //= Vertex::getBindingDescription();
 		VkVertexInputAttributeDescription attributeDescriptions; //= Vertex::getAttributeDescriptions();
 
@@ -3184,7 +3093,7 @@ private:
 		vkBindBufferMemory(device, buffer, bufferMemory, 0);
 	}
 
-
+	//TODO: rename function to more appropriate name
 	void cudaInitVertexMem() {
 		checkCudaErrors(cudaStreamCreate(&streamToRun));
 
@@ -3279,198 +3188,6 @@ private:
 
 #elif SHAPE_MODE == 0
 
-		/*
-		vertData = (Vertex*)malloc(3 * NUM_TRIS * sizeof(Vertex));
-
-		// BEGIN TRI 1
-
-		vertData[0] = Vertex();
-
-		vertData[0].pos[0] = 400;
-		vertData[0].pos[1] = 400;
-		vertData[0].pos[2] = -100.0f;
-		vertData[0].pos[3] = 1.0f;
-
-		vertData[0].color[0] = 0.0f;
-		vertData[0].color[1] = 0.0f;
-		vertData[0].color[2] = 1.0f;
-
-		vertData[1] = Vertex();
-
-		vertData[1].pos[0] = -512.0f;
-		vertData[1].pos[1] = -512.0f;
-		vertData[1].pos[2] = -100.0f;
-		vertData[1].pos[3] = 1.0f;
-
-		vertData[1].color[0] = 0.0f;
-		vertData[1].color[1] = 1.0f;
-		vertData[1].color[2] = 0.0f;
-
-		vertData[2] = Vertex();
-
-		vertData[2].pos[0] = 512.0f;
-		vertData[2].pos[1] = -512.0f;
-		vertData[2].pos[2] = -100.0f;
-		vertData[2].pos[3] = 1.0f;
-
-		vertData[2].color[0] = 1.0f;
-		vertData[2].color[1] = 0.0f;
-		vertData[2].color[2] = 0.0f;
-
-
-		//END TRI 1
-
-		// BEGIN TRI 2
-
-		vertData[3] = Vertex();
-
-		vertData[3].pos[0] = 512;
-		vertData[3].pos[1] = -512;
-		vertData[3].pos[2] = -100.0f;
-		vertData[3].pos[3] = 1.0f;
-
-		vertData[3].color[0] = 1.0f;
-		vertData[3].color[1] = 0.0f;
-		vertData[3].color[2] = 0.0f;
-
-		vertData[4] = Vertex();
-
-		vertData[4].pos[0] = -512.0f;
-		vertData[4].pos[1] = -512.0f;
-		vertData[4].pos[2] = -100.0f;
-		vertData[4].pos[3] = 1.0f;
-
-		vertData[4].color[0] = 0.0f;
-		vertData[4].color[1] = 1.0f;
-		vertData[4].color[2] = 0.0f;
-
-		vertData[5] = Vertex();
-
-		vertData[5].pos[0] = -512.0f;
-		vertData[5].pos[1] = -512.0f;
-		vertData[5].pos[2] = -300.0f;
-		vertData[5].pos[3] = 1.0f;
-
-		vertData[5].color[0] = 0.0f;
-		vertData[5].color[1] = 0.0f;
-		vertData[5].color[2] = 1.0f;
-
-
-		//END TRI 2
-
-		// BEGIN TRI 3
-
-		vertData[6] = Vertex();
-
-		vertData[6].pos[0] = -512;
-		vertData[6].pos[1] = 512;
-		vertData[6].pos[2] = -100.0f;
-		vertData[6].pos[3] = 1.0f;
-
-		vertData[6].color[0] = 0.0f;
-		vertData[6].color[1] = 1.0f;
-		vertData[6].color[2] = 0.0f;
-
-		vertData[7] = Vertex();
-
-		vertData[7].pos[0] = -512.0f;
-		vertData[7].pos[1] = -512.0f;
-		vertData[7].pos[2] = -100.0f;
-		vertData[7].pos[3] = 1.0f;
-
-		vertData[7].color[0] = 1.0f;
-		vertData[7].color[1] = 0.0f;
-		vertData[7].color[2] = 0.0f;
-
-		vertData[8] = Vertex();
-
-		vertData[8].pos[0] = 512.0f;
-		vertData[8].pos[1] = 512.0f;
-		vertData[8].pos[2] = -100.0f;
-		vertData[8].pos[3] = 1.0f;
-
-		vertData[8].color[0] = 0.0f;
-		vertData[8].color[1] = 0.0f;
-		vertData[8].color[2] = 1.0f;
-
-
-		//END TRI 3
-
-		// BEGIN TRI 4
-
-		vertData[9] = Vertex();
-
-		vertData[9].pos[0] = -3000;
-		vertData[9].pos[1] = 1500;
-		vertData[9].pos[2] = -100.0f;
-		vertData[9].pos[3] = 1.0f;
-
-		vertData[9].color[0] = 1.0f;
-		vertData[9].color[1] = 1.0f;
-		vertData[9].color[2] = 1.0f;
-
-		vertData[10] = Vertex();
-
-		vertData[10].pos[0] = 3000;
-		vertData[10].pos[1] = 1500;
-		vertData[10].pos[2] = -100.0f;
-		vertData[10].pos[3] = 1.0f;
-
-		vertData[10].color[0] = 1.0f;
-		vertData[10].color[1] = 1.0f;
-		vertData[10].color[2] = 1.0f;
-
-		vertData[11] = Vertex();
-
-		vertData[11].pos[0] = 1500;
-		vertData[11].pos[1] = 1500;
-		vertData[11].pos[2] = -3000;
-		vertData[11].pos[3] = 1.0f;
-
-		vertData[11].color[0] = 1.0f;
-		vertData[11].color[1] = 1.0f;
-		vertData[11].color[2] = 1.0f;
-
-		//END TRI 4
-
-		// BEGIN TRI 5
-
-		vertData[12] = Vertex();
-
-		vertData[12].pos[0] = -100;
-		vertData[12].pos[1] = -2050;
-		vertData[12].pos[2] = -100;
-		vertData[12].pos[3] = 1.0f;
-
-		vertData[12].color[0] = 1.0f;
-		vertData[12].color[1] = 1.0f;
-		vertData[12].color[2] = 1.0f;
-
-		vertData[13] = Vertex();
-
-		vertData[13].pos[0] = 0;
-		vertData[13].pos[1] = -2100;
-		vertData[13].pos[2] = -100;
-		vertData[13].pos[3] = 1.0f;
-
-		vertData[13].color[0] = 1.0f;
-		vertData[13].color[1] = 1.0f;
-		vertData[13].color[2] = 1.0f;
-
-		vertData[14] = Vertex();
-
-		vertData[14].pos[0] = 0;
-		vertData[14].pos[1] = -2000;
-		vertData[14].pos[2] = -100;
-		vertData[14].pos[3] = 1.0f;
-
-		vertData[14].color[0] = 1.0f;
-		vertData[14].color[1] = 1.0f;
-		vertData[14].color[2] = 1.0f;
-
-		//END TRI 5
-		*/
-
 		int numVerts = OBJLoader::loadRawVertexList("Assets/cubey.obj", &vertData);
 		
 		vertData = (Vertex*)malloc(numVerts * sizeof(Vertex));
@@ -3494,7 +3211,6 @@ private:
 
 		//Initialise memory required to store intersection results
 		size_t hitlistSize = (WIDTH * HEIGHT * sizeof(IntersectionResult)) / ((DEFERRED_REFRESH_SQUARE_DIM)*(DEFERRED_REFRESH_SQUARE_DIM));
-		//size_t hitlistSize = (WIDTH * HEIGHT * sizeof(IntersectionResult));
 
 		hitListData = (IntersectionResult*)malloc(hitlistSize);
 
@@ -3658,93 +3374,9 @@ private:
 
 	void doBlit(VkCommandBuffer commandBuffer, VkImage dstImage) {
 
-
-		// Define the region to blit (we will blit the whole swapchain image)
-		/*
-		VkOffset3D blitSize;
-		blitSize.x = WIDTH;
-		blitSize.y = HEIGHT;
-		blitSize.z = 1;
-		VkImageBlit imageBlitRegion{};
-		imageBlitRegion.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		imageBlitRegion.srcSubresource.layerCount = 1;
-		imageBlitRegion.srcOffsets[1] = blitSize;
-		imageBlitRegion.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		imageBlitRegion.dstSubresource.layerCount = 1;
-		imageBlitRegion.dstOffsets[1] = blitSize;
-		*/
-
-		//TODO: writing direct to stagingBuffer in drawFrame is not working
-		//Perhaps export pixels to CUDA and write to that and use below to convert to vkimage?
-
-		//void* data;
-		//vkMapMemory(device, stagingBufferMemory, 0, WIDTH*HEIGHT*4*sizeof(stbi_uc), 0, &data);
-		//memcpy(data, pixels, static_cast<size_t>(WIDTH*HEIGHT * 4 * sizeof(stbi_uc)));
-		//vkUnmapMemory(device, stagingBufferMemory);
-
 		transitionImageLayout(commandBuffer, dstImage, VK_FORMAT_B8G8R8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 		copyBufferToImage(commandBuffer, stagingBuffer, dstImage, static_cast<uint32_t>(WIDTH), static_cast<uint32_t>(HEIGHT));
-		//copyBufferToImage(commandBuffer, stagingBuffer, dstImage, static_cast<uint32_t>(WIDTH), static_cast<uint32_t>(HEIGHT));
-
 		transitionImageLayout(commandBuffer, dstImage, VK_FORMAT_B8G8R8A8_UNORM, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-
-		// Issue the blit command
-
-		/*
-		vkCmdBlitImage(
-			commandBuffer,
-			textureImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-			dstImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-			1,
-			&imageBlitRegion,
-			VK_FILTER_NEAREST);
-		   */
-
-		   //WHAT THE FUCK IS HAPPENING
-		   /*
-		   VkImageCopy* pRegions = new VkImageCopy();
-		   //VkImageBlit* pRegions = new VkImageBlit();
-		   //pRegions->dstOffsets[0] = VkOffset3D{ 0, 0, 0 };
-		   //pRegions->dstOffsets[1] = VkOffset3D{ 100, 100, 0 };
-		   pRegions->dstOffset = VkOffset3D{ 100, 100, 0 };
-		   pRegions->dstSubresource = VkImageSubresourceLayers();
-		   pRegions->dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		   pRegions->dstSubresource.baseArrayLayer = 0;
-		   pRegions->dstSubresource.layerCount = 1;
-		   pRegions->dstSubresource.mipLevel = 0;
-
-		   //pRegions->srcOffsets[0] = VkOffset3D{ 0, 0, 0 };
-		   //pRegions->srcOffsets[1] = VkOffset3D{ 100, 100, 0 };
-		   pRegions->srcOffset = VkOffset3D{ 100, 100, 0 };
-		   pRegions->srcSubresource = VkImageSubresourceLayers();
-		   pRegions->srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		   pRegions->srcSubresource.baseArrayLayer = 0;
-		   pRegions->srcSubresource.layerCount = 1;
-		   pRegions->srcSubresource.mipLevel = 0;
-
-
-
-		   vkCmdCopyImage(
-			   commandBuffer,
-			   textureImage,
-			   VK_IMAGE_LAYOUT_GENERAL,
-			   dstImage,
-			   VK_IMAGE_LAYOUT_GENERAL,
-			   1,
-			   pRegions);
-			   */
-
-			   /*
-			   vkCmdBlitImage(
-				   commandBuffer,
-				   textureImage,
-				   VK_IMAGE_LAYOUT_GENERAL,
-				   dstImage,
-				   VK_IMAGE_LAYOUT_GENERAL,
-				   1,
-				   pRegions,
-				   VK_FILTER_LINEAR);
-				 */
 
 	}
 
@@ -3783,7 +3415,7 @@ private:
 
 
 	void mainLoop() {
-		//updateUniformBuffer();
+
 		glfwSetKeyCallback(window, key_callback);
 
 		while (!glfwWindowShouldClose(window)) {
@@ -3793,30 +3425,6 @@ private:
 
 		vkDeviceWaitIdle(device);
 	}
-
-/*
-void updateUniformBuffer() {
-		UniformBufferObject ubo = {};
-
-		mat4x4_identity(ubo.model);
-		mat4x4 Model;
-		mat4x4_dup(Model, ubo.model);
-		mat4x4_rotate(ubo.model, Model, 1.0f, 0.0f, 1.0f, degreesToRadians(5.0f));
-
-		vec3 eye = { 2.0f, 2.0f, 2.0f };
-		vec3 center = { 0.0f, 0.0f, 0.0f };
-		vec3 up = { 0.0f, 0.0f, 1.0f };
-		mat4x4_look_at(ubo.view, eye, center, up);
-		mat4x4_perspective(ubo.proj, degreesToRadians(45.0f),
-			swapChainExtent.width / (float)swapChainExtent.height,
-			0.1f, 10.0f);
-		ubo.proj[1][1] *= -1;
-		void* data;
-		vkMapMemory(device, uniformBufferMemory, 0, sizeof(ubo), 0, &data);
-		memcpy(data, &ubo, sizeof(ubo));
-		vkUnmapMemory(device, uniformBufferMemory);
-	}
-	*/
 
 	void createDescriptorPool() {
 		VkDescriptorPoolSize poolSize = {};
@@ -3875,10 +3483,6 @@ void updateUniformBuffer() {
 			spheres[2].center[1] += (keys[0]) ? -speed : speed;
 			spheresChanged = true;
 #elif SHAPE_MODE == 0
-			//vertsChanged = true;
-			//vertData[((NUM_TRIS - 1) * 3) + 0].pos[2] += (keys[0]) ? -speed : speed;
-			//vertData[((NUM_TRIS - 1) * 3) + 1].pos[2] += (keys[0]) ? -speed : speed;
-			//vertData[((NUM_TRIS - 1) * 3) + 2].pos[2] += (keys[0]) ? -speed : speed;
 			light_z += (keys[0]) ? -speed : speed;
 #endif
 		}
@@ -3887,10 +3491,6 @@ void updateUniformBuffer() {
 			spheres[2].center[2] += (keys[6]) ? -speed : speed;
 			spheresChanged = true;
 #elif SHAPE_MODE == 0
-			//vertsChanged = true;
-			//vertData[((NUM_TRIS - 1) * 3) + 0].pos[1] += (keys[6]) ? -speed : speed;
-			//vertData[((NUM_TRIS - 1) * 3) + 1].pos[1] += (keys[6]) ? -speed : speed;
-			//vertData[((NUM_TRIS - 1) * 3) + 2].pos[1] += (keys[6]) ? -speed : speed;
 			light_y += (keys[6]) ? -speed : speed;
 #endif
 		}
@@ -3950,7 +3550,7 @@ void updateUniformBuffer() {
 				std::numeric_limits<uint64_t>::max(),
 				imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
 
-			//Vulkan draw first frame
+			//Vulkan draw first frame (blit welcome texture)
 			//CUDA draw all subsequent frames
 			if (!startSubmit) {
 				submitVulkan(imageIndex);
@@ -3977,24 +3577,10 @@ void updateUniformBuffer() {
 			//Draw image to screen
 			vkQueuePresentKHR(presentQueue, &presentInfo);
 
-			//TODO: replace this with ray-tracing kernel
-			//TODO: Consider Vulkan Compute shader - https://github.com/SaschaWillems/Vulkan/blob/master/examples/raytracing/raytracing.cpp
-
 			//Run CUDA Kernel (waits for render sempaphores to signal)
 			cudaUpdateVertexBuffer();
 
 		}
-
-		// Added sleep of 10 millisecs so that CPU does not submit too much work to
-		// GPU
-		//std::this_thread::sleep_for(std::chrono::microseconds(30000));
-
-		//
-		////if it's been a second since last tic
-		//if (std::chrono::duration_cast<std::chrono::milliseconds>(cNow - WIN_CTIME).count() >= 1000) {
-		//	WIN_CTIME = cNow;
-		//}
-
 	}
 
 	void copyBufferToImage(VkCommandBuffer commandBuffer, VkBuffer buffer, VkImage image, uint32_t width, uint32_t height) {
@@ -4132,13 +3718,9 @@ void updateUniformBuffer() {
 
 	void createTextureImages() {
 
-
-		//VkDeviceSize imageSize = WIDTH * HEIGHT * 4 * sizeof(stbi_uc);
 		VkDeviceSize imageSize = WIDTH * HEIGHT * sizeof(Texel);
 
-		//createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
-
-		//create vulkan buffer (for use with CUDA, hence ext)
+		//create Vulkan buffer (it's a Vulkan buffer for use with CUDA, hence it's referred to as "external" or "ext")
 #ifdef _WIN64
 		if (IsWindows8OrGreater()) {
 			createBufferExtMem(imageSize,
@@ -4373,7 +3955,6 @@ void updateUniformBuffer() {
 				, stagingBufferMemory);
 #endif
 
-		//cudaExtMemHandleDesc.size = 4 * sizeof(stbi_uc) * WIDTH * HEIGHT;
 		cudaExtMemHandleDesc.size = sizeof(Texel) * WIDTH * HEIGHT;
 
 		checkCudaErrors(cudaImportExternalMemory(&cudaExtMemPixelBuffer,
@@ -4383,24 +3964,15 @@ void updateUniformBuffer() {
 		cudaExtBufferDesc.offset = 0;
 
 		//TODO: fix hack assumes texture.jpg is same dimensions as width/height
-		//cudaExtBufferDesc.size = 4 * sizeof(stbi_uc) * WIDTH * HEIGHT;
 		cudaExtBufferDesc.size = sizeof(Texel) * WIDTH * HEIGHT;
 
 		cudaExtBufferDesc.flags = 0;
 
-		//TODO: replace with "CUDA import VK Image"
 		//See: https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__EXTRES__INTEROP.html
 		//Maps a buffer onto the "external memory object"
 		checkCudaErrors(cudaExternalMemoryGetMappedBuffer(
 			&cudaDevPixelptr, cudaExtMemPixelBuffer, &cudaExtBufferDesc));
-
-
-		// START IMPORT INTERSECTION RESULTS
-
-
-
-		//END IMPORT INTERSECTION RESULTS
-
+		
 		printf("CUDA Imported Vulkan pixel buffer\n");
 	}
 
@@ -4567,7 +4139,6 @@ void updateUniformBuffer() {
 		//CUDA output into Vulkan
 		Texel* pixelData = (Texel*)cudaDevPixelptr;
 
-		//checkCudaErrors(cudaMallocManaged((void**)&cudaSpheres, NUM_SPHERES * sizeof(Sphere), cudaMemAttachGlobal));
 #if SHAPE_MODE == 1
 
 		if (spheresChanged) {
@@ -4584,24 +4155,6 @@ void updateUniformBuffer() {
 				)
 			);
 		}
-
-/*#elif SHAPE_MODE == 0
-
-		if (vertsChanged) {
-			vertsChanged = false;
-			//Hijack framesRefreshRequired to update frame after vert data changes
-			framesRefreshRequired = DEFERRED_REFRESH_SQUARE_DIM * DEFERRED_REFRESH_SQUARE_DIM;
-			checkCudaErrors(
-				cudaMemcpyAsync(
-					cudaVerts
-					, vertData
-					, NUM_TRIS * 3 * sizeof(Vertex)
-					, cudaMemcpyHostToDevice
-					, streamToRun
-				)
-			);
-		}
-		*/
 #endif
 
 		//Render whole image
@@ -4688,7 +4241,6 @@ void updateUniformBuffer() {
 			checkCudaErrors(cudaFree(cudaTex1));
 			checkCudaErrors(cudaFree(cudaTex2));
 		*/
-
 		free(vertData);
 		free(hitListData);
 
@@ -4712,6 +4264,7 @@ void updateUniformBuffer() {
 			vkDestroyImageView(device, imageView, nullptr);
 		}
 		
+		//TODO: no longer using graphics pipeline, but keeping these as an important reminder to clean in case it is ever re-instated
 		/*
 		vkDestroyPipeline(device, graphicsPipeline, nullptr);
 		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
@@ -4735,6 +4288,10 @@ void updateUniformBuffer() {
 	}
 };
 
+//// END CUDA/VULKAN APP CODE
+
+//// START MAIN PROGRAM EXECUTION
+
 int main(int argc, char* argv[]) {
 	execution_path = argv[0];
 	vulkanCudaApp app;
@@ -4749,3 +4306,5 @@ int main(int argc, char* argv[]) {
 
 	return EXIT_SUCCESS;
 }
+
+//// END MAIN PROGRAM EXECUTION

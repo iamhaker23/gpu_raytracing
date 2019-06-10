@@ -76,8 +76,6 @@ struct BVH_BAKE {
 			current[1] = (c & 0b010) ? 1 : 0;
 			current[2] = (c & 0b001) ? 1 : 0;
 
-			//std::cout << "CURRENT:" << current[0] << "," << current[1] << "," << current[2] << std::endl;
-
 			children[c].min[0] = xStep[current[0]];
 			children[c].min[1] = yStep[current[1]];
 			children[c].min[2] = zStep[current[2]];
@@ -95,9 +93,13 @@ struct Vertex {
 	vec3 color;
 	vec3 uv;
 	vec3 normal;
-	vec3 tangent;
-	vec3 bitangent;
+	
 
+	//NOTE: no longer used - once stored precomputed tangent/bitangent but did not work correctly
+	//vec3 tangent;
+	//vec3 bitangent;
+
+	//NOTE: Required for Vulkan to use the vertex class (e.g. shaders)
 	/*
 	static VkVertexInputBindingDescription getBindingDescription() {
 		VkVertexInputBindingDescription bindingDescription = {};
