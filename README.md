@@ -16,7 +16,7 @@ Requirements:
 
 | Tested GPUs | CUDA architecture | Software | Solution File to use |
 | --- | --- | --- | --- |
-| Nvidia geforce 940M | compute_50,sm_50 | Vulkan 1.0, CUDA 10.0, Visual Studio 2017 | simpleVulkan_vs2017.sln |
+| Nvidia geforce 940MX | compute_50,sm_50 | Vulkan 1.0, CUDA 10.0, Visual Studio 2017 | simpleVulkan_vs2017.sln |
 | Nvidia geforce GTX 960 | compute_52,sm_52 | Vulkan 1.1, CUDA 10.1, Visual Studio 2017 | simpleVulkan_vs2015.sln | 
 
 * Ensure VS2017, CUDA toolkit and Vulkan are installed (Guidance [on Nvidia CUDA](https://docs.nvidia.com/cuda/cuda-installation-guide-microsoft-windows/index.html) )
