@@ -146,7 +146,7 @@
  *	#define DEFERRED_REFRESH_SQUARE_DIM 2
  *	#define DEFERRED_REFRESH_SQUARE_DIM 2
  */
-#define DEFERRED_REFRESH_SQUARE_DIM 4
+#define DEFERRED_REFRESH_SQUARE_DIM 2
 //Enable/disable vulkan validation (prints Vulkan validation errors in the console window)
 #define VULKAN_VALIDATION 0
 //#define VULKAN_VALIDATION 1
@@ -1101,6 +1101,7 @@ __device__ void RaytraceTris(
 		toLight[0] = lightPos[0] - (hitPos[0]);
 		toLight[1] = lightPos[1] - (hitPos[1]);
 		toLight[2] = lightPos[2] - (hitPos[2]);
+
 		float distToLight = magnitude(toLight);
 		toLight[0] = toLight[0] / distToLight;
 		toLight[1] = toLight[1] / distToLight;
@@ -1179,6 +1180,11 @@ __device__ void RaytraceTris(
 		nnnhit[1] = -nnhit[1];
 		nnnhit[2] = -nnhit[2];
 
+		vec3 lightRayDir = { 0 };
+		lightRayDir[0] = -toLight[0];
+		lightRayDir[1] = -toLight[1];
+		lightRayDir[2] = -toLight[2];
+
 #if USE_BVH == 0
 		intersectTris(&null, verts, hitlist, factor, numTris
 			, hitPos[0] + nnhit[0] * 1e-2
@@ -1197,6 +1203,7 @@ __device__ void RaytraceTris(
 
 		int shadowCaster = hitlist->triIndex;
 
+		//ambient light factor
 		float m = 0.1f;
 
 		// no shadow caster, do shading
@@ -1210,11 +1217,7 @@ __device__ void RaytraceTris(
 			*/
 
 			//Fix: removed double-sided lighting
-			m = max(m,
-				// max(
-				//	(dot(toLight, nnhit))
-					 (dot(toLight, nnnhit))
-				//)
+			m = max(m,(dot(nnhit, lightRayDir))
 			);
 			
 			/*
@@ -1232,23 +1235,27 @@ __device__ void RaytraceTris(
 			*/
 
 			vec3 halfwayDir = { 0 };
-			halfwayDir[0] = toLight[0] * distToLight + raydir[0] * raydirmag;
-			halfwayDir[1] = toLight[1] * distToLight  + raydir[1] * raydirmag;
-			halfwayDir[2] = toLight[2] * distToLight + raydir[2] * raydirmag;
+			//halfwayDir[0] = (toLight[0] * distToLight) + (raydir[0] * raydirmag);
+			//halfwayDir[1] = (toLight[1] * distToLight)  + (raydir[1] * raydirmag);
+			//halfwayDir[2] = (toLight[2] * distToLight) + (raydir[2] * raydirmag);
+			halfwayDir[0] = (lightRayDir[0] ) + (raydir[0]);
+			halfwayDir[1] = (lightRayDir[1] ) + (raydir[1]);
+			halfwayDir[2] = (lightRayDir[2] ) + (raydir[2]);
 			float hwdmag = magnitude(halfwayDir);
 			halfwayDir[0] /= hwdmag;
 			halfwayDir[1] /= hwdmag;
 			halfwayDir[2] /= hwdmag;
 
 			//TODO: variable shininess using pow and exponent
-			float spec = max(
-				abs(dot(halfwayDir, nnhit))
-				, abs(dot(halfwayDir, nnnhit))
-			);
+			float spec = //max(
+				max(dot(nnhit, halfwayDir), 0.0f);
+				//, abs(dot(halfwayDir, nnnhit))
+			//);
 
 			//light "power"
 			m = m * 1.5f;
-			m = max(0.1f, (0.5f*(spec * spec * spec * spec)*m) + (0.5f*m));
+
+			m = max(0.1f, (0.5f*(pow(spec, 10))*m) + (0.5f*m));
 			m = min(1.0f, m);
 		}
 
@@ -3932,7 +3939,7 @@ void updateUniformBuffer() {
 		//std::ratio<1, 60> gives 30fps
 		//std::ratio<1, 70> gives 35fps
 		//Affects screen refresh and CUDA work
-		int ticks = (int)(std::chrono::duration<float, std::ratio<1, 120>>(cNow - WIN_CTIME).count());
+		int ticks = (int)(std::chrono::duration<float, std::ratio<1, 60>>(cNow - WIN_CTIME).count());
 
 		if (((ticks % 2 == 1) && ticks != oldTicks)) {
 			WIN_CTIME = cNow;
