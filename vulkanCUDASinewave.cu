@@ -1407,6 +1407,10 @@ __device__ void RaytraceTris(
 				, x1, y1);
 		}
 		
+		//light attenuation here
+		float lightPow = m / (0.001f * distToLight);
+		blendCol(col, m*m, lightPow*255.0f, lightPow*255.0f, lightPow*255.0f);
+
 		//float colMag = magnitude(diffCol);
 		//diffCol[0] = diffCol[0] / colMag;
 		//diffCol[1] = diffCol[1] / colMag;
@@ -1899,6 +1903,9 @@ __global__ void get_raytraced_pixels(
 
 #elif SHAPE_MODE == 0
 
+		int pixelIdx = (y_int * WIDTH) + (x_int);
+		float stocasticNoise = (pixels[pixelIdx].col[0] + pixels[pixelIdx].col[1] + pixels[pixelIdx].col[2]) / (3.0f * 255.0f);
+
 		RaytraceTris<1>(
 			//image
 			&pixels[(y_int * WIDTH) + (x_int)]
@@ -1909,7 +1916,7 @@ __global__ void get_raytraced_pixels(
 			//verts
 			, verts, numTris
 			//raydir (also acts as cam projection where smaller z = larger fov)
-			, x, y, ZFAR_TRIANGLE_RT
+			, x + stocasticNoise, y - stocasticNoise, ZFAR_TRIANGLE_RT
 			//cam pos
 			, cam_x, cam_y, cam_z
 			, light_x, light_y, light_z
