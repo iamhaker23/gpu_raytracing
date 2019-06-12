@@ -146,7 +146,7 @@
  *	DEFERRED_REFRESH_SQUARE_DIM only supports power-of-two values (for maximising GPU utilisation)
  *	#define DEFERRED_REFRESH_SQUARE_DIM 1
  *	#define DEFERRED_REFRESH_SQUARE_DIM 2
- *	#define DEFERRED_REFRESH_SQUARE_DIM 2
+ *	#define DEFERRED_REFRESH_SQUARE_DIM 4
  */
 #define DEFERRED_REFRESH_SQUARE_DIM 2
 
@@ -3112,11 +3112,13 @@ private:
 		//TODO: try 5 spheres in a line horizontally
 		//TODO: refraction should be flipped
 
+
+
 		spheres[0] = Sphere(c
 			, 500.0f
 			, sc
-			, 0
-			, 0
+			, 1
+			, 1
 			, ec
 			, true);
 
