@@ -305,142 +305,207 @@ int OBJLoader::putVertsInBVH(Vertex* vertData, int numVerts, BVH_BAKE* bvh, int 
 	return addedTris;
 }
 
+///////////////////////////////////////////////////////
+//Linear BVH code from: https://devblogs.nvidia.com/thinking-parallel-part-iii-tree-construction-gpu/
+///////////////////////////////////////////////////////
+
+// Expands a 10-bit integer into 30 bits
+// by inserting 2 zeros after each bit.
+unsigned int expandBits(unsigned int v)
+{
+	v = (v * 0x00010001u) & 0xFF0000FFu;
+	v = (v * 0x00000101u) & 0x0F00F00Fu;
+	v = (v * 0x00000011u) & 0xC30C30C3u;
+	v = (v * 0x00000005u) & 0x49249249u;
+	return v;
+}
+
+// Calculates a 30-bit Morton code for the
+// given 3D point located within the unit cube [0,1].
+unsigned int morton3D(float x, float y, float z)
+{
+	x = min(max(x * 1024.0f, 0.0f), 1023.0f);
+	y = min(max(y * 1024.0f, 0.0f), 1023.0f);
+	z = min(max(z * 1024.0f, 0.0f), 1023.0f);
+	unsigned int xx = expandBits((unsigned int)x);
+	unsigned int yy = expandBits((unsigned int)y);
+	unsigned int zz = expandBits((unsigned int)z);
+	return xx * 4 + yy * 2 + zz;
+}
+
+int findSplit(unsigned int* sortedMortonCodes,
+	int           first,
+	int           last)
+{
+	// Identical Morton codes => split the range in the middle.
+
+	unsigned int firstCode = sortedMortonCodes[first];
+	unsigned int lastCode = sortedMortonCodes[last];
+
+	if (firstCode == lastCode)
+		return (first + last) >> 1;
+
+	// Calculate the number of highest bits that are the same
+	// for all objects, using the count-leading-zeros intrinsic.
+	//NOTE: Adapted for VC++
+	unsigned long commonPrefix = -1;
+	_BitScanReverse(&commonPrefix, firstCode ^ lastCode);
+
+	// Use binary search to find where the next bit differs.
+	// Specifically, we are looking for the highest object that
+	// shares more than commonPrefix bits with the first one.
+
+	int split = first; // initial guess
+	int step = last - first;
+
+	do
+	{
+		step = (step + 1) >> 1; // exponential decrease
+		int newSplit = split + step; // proposed new position
+
+		if (newSplit < last)
+		{
+			unsigned int splitCode = sortedMortonCodes[newSplit];
+			
+			//NOTE: Adapted for VC++
+			unsigned long splitPrefix = -1;
+			_BitScanReverse(&commonPrefix, firstCode ^ splitCode);
+			
+			if (splitPrefix > commonPrefix)
+				split = newSplit; // accept proposal
+		}
+	} while (step > 1);
+
+	return split;
+}
+
+bool OBJLoader::mortonCodeSort(TriangleBounds a, TriangleBounds b) {
+	return a.mortonCode > b.mortonCode;
+}
+
+void OBJLoader::createLinearBVH(std::vector<vector3d> barycentres, std::vector<float> radii, float* sceneCentroid, float* cubeSize) {
+
+	int num = static_cast<int>(barycentres.size());
+
+	std::vector<TriangleBounds> bounds = std::vector<TriangleBounds>();
+	for (int i = 0; i < num; i++) {
+		TriangleBounds a = TriangleBounds();
+
+		//mortoncode relative to scene centroid (and unit size)
+		a.mortonCode = morton3D((barycentres[i].pos[0] - sceneCentroid[0]) / cubeSize[0], (barycentres[i].pos[1] - sceneCentroid[1]) / cubeSize[1], (barycentres[i].pos[2] - sceneCentroid[2]) / cubeSize[2]);
+		a.objId = i;
+
+		bounds.push_back(a);
+	}
+
+	unsigned int* sortedMortonCodes = new unsigned int[num];
+	int* sortedObjectIds = new int[num];
+
+	std::sort(bounds.begin(), bounds.end(), mortonCodeSort);
+
+	for (int i = 0; i < static_cast<int>(bounds.size()); i++) {
+		sortedMortonCodes[i] = bounds[i].mortonCode;
+		sortedObjectIds[i] = bounds[i].objId;
+	}
+
+	generateHierarchy(sortedMortonCodes, sortedObjectIds, 0, num, num);
+
+}
+
+BVH_BAKE*  OBJLoader::generateHierarchy(unsigned int* sortedMortonCodes,
+	int*          sortedObjectIDs,
+	int           first,
+	int           last,
+	float* radii,
+	int numObj)
+{
+	// Single object => create a leaf node.
+	if (first == last) {
+		int objId = (first < numObj) ? sortedObjectIDs[first] : -1;
+		return new BVH_BAKE(objId, radii[objId]);
+	}
+
+	// Determine where to split the range.
+	int split = findSplit(sortedMortonCodes, first, last);
+
+	// Process the resulting sub-ranges recursively.
+	BVH_BAKE* childA = generateHierarchy(sortedMortonCodes, sortedObjectIDs,
+		first, split, radii, numObj);
+
+	
+	BVH_BAKE* childB = generateHierarchy(sortedMortonCodes, sortedObjectIDs,
+		split + 1, last, radii, numObj);
+	
+	BVH_BAKE* parent = new BVH_BAKE(childA, childB);
+
+	m_BVH.push_back(*parent);
+	m_BVH.push_back(*childA);
+	m_BVH.push_back(*childB);
+
+	return parent;
+}
+
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
 
 int OBJLoader::countBVHNeeded(Vertex* vertData, int numVerts) {
-	//getmin,max bounds
-	int maxVert[3] = { -1, -1, -1 };
-	int minVert[3] = { -1, -1, -1 };
-
-	for (int i = 0; i < numVerts; i++) {
-
-		if (maxVert[0] == -1 || vertData[i].pos[0] > vertData[maxVert[0]].pos[0]) {
-			maxVert[0] = i;
-		}
-		if (maxVert[1] == -1 || vertData[i].pos[1] > vertData[maxVert[1]].pos[1]) {
-			maxVert[1] = i;
-		}
-		if (maxVert[2] == -1 || vertData[i].pos[2] > vertData[maxVert[2]].pos[2]) {
-			maxVert[2] = i;
-		}
-
-		if (minVert[0] == -1 || vertData[i].pos[0] < vertData[minVert[0]].pos[0]) {
-			minVert[0] = i;
-		}
-		if (minVert[1] == -1 || vertData[i].pos[1] < vertData[minVert[1]].pos[1]) {
-			minVert[1] = i;
-		}
-		if (minVert[2] == -1 || vertData[i].pos[2] < vertData[minVert[2]].pos[2]) {
-			minVert[2] = i;
-		}
 
 
-	}
-
-	//divide each dimension by boxsize
-	vec3 bvhSpan = { 0 };
-	bvhSpan[0] = vertData[maxVert[0]].pos[0] - vertData[minVert[0]].pos[0];
-	bvhSpan[1] = vertData[maxVert[1]].pos[1] - vertData[minVert[1]].pos[1];
-	bvhSpan[2] = vertData[maxVert[2]].pos[2] - vertData[minVert[2]].pos[2];
-
-	//pad BVH-space
-	vec3 padding = { 0 };
-	padding[0] = bvhSpan[0];
-	padding[1] = bvhSpan[1];
-	padding[2] = bvhSpan[2];
-
-	int maxNumBVH[3] = { 1, 1, 1 };
-
-	float maxSpan = (bvhSpan[0] > bvhSpan[1]) ? bvhSpan[0] : bvhSpan[1];
-	maxSpan = (maxSpan > bvhSpan[2]) ? maxSpan : bvhSpan[2];
+	float padding = 5.0f;
+	std::vector<float> radii = std::vector<float>();
+	std::vector<vector3d> barycenters = std::vector <vector3d> ();
 	
-	//NOTE: 2048 is somewhat tuned for Cornell box
-	float bvhBoxDim = 2048;
+	float* cubeSize = new float[3];
+	cubeSize[0] = 0;
+	cubeSize[1] = 0;
+	cubeSize[2] = 0;
 
-	//TODO: automatic selection needs finetuning for robust results -> large impact on octree balance and thus performance
-	//float bvhBoxDim = (BVH_BOX_SIZE > maxSpan) ? BVH_BOX_SIZE : maxSpan / 5;
-	//float bvhBoxDim = maxSpan / 4;
-	
-	std::cout << "SPAN:" << bvhBoxDim << std::endl;
+	for (int i = 0; i < numVerts; i += 3) {
+		vector3d barycenter = vector3d();
+		barycenter.pos[0] = (vertData[i].pos[0] + vertData[i + 1].pos[0] + vertData[i + 2].pos[0]) / 3.0f;
+		barycenter.pos[1] = (vertData[i].pos[1] + vertData[i + 1].pos[1] + vertData[i + 2].pos[1]) / 3.0f;
+		barycenter.pos[2] = (vertData[i].pos[2] + vertData[i + 1].pos[2] + vertData[i + 2].pos[2]) / 3.0f;
+		barycenters.push_back(barycenter);
+		
+		float distances[3] = { 0 };
+		distances[0] = ((barycenter.pos[0] - vertData[i].pos[0]) *(barycenter.pos[0] - vertData[i].pos[0]))
+			+ ((barycenter.pos[1] - vertData[i].pos[1]) *(barycenter.pos[1] - vertData[i].pos[1]))
+			+ ((barycenter.pos[2] - vertData[i].pos[2]) *(barycenter.pos[2] - vertData[i].pos[2]));
+		distances[1] = ((barycenter.pos[0] - vertData[i+1].pos[0]) *(barycenter.pos[0] - vertData[i + 1].pos[0]))
+			+ ((barycenter.pos[1] - vertData[i + 1].pos[1]) *(barycenter.pos[1] - vertData[i + 1].pos[1]))
+			+ ((barycenter.pos[2] - vertData[i + 1].pos[2]) *(barycenter.pos[2] - vertData[i + 1].pos[2]));
+		distances[2] = ((barycenter.pos[0] - vertData[i + 2].pos[0]) *(barycenter.pos[0] - vertData[i + 2].pos[0]))
+			+ ((barycenter.pos[1] - vertData[i + 2].pos[1]) *(barycenter.pos[1] - vertData[i + 2].pos[1]))
+			+ ((barycenter.pos[2] - vertData[i + 2].pos[2]) *(barycenter.pos[2] - vertData[i + 2].pos[2]));
+		
+		float radius = sqrtf(max(max(distances[0], distances[1]), distances[2])) + padding;
+		radii.push_back(radius);
 
-	while (padding[0] >= bvhBoxDim) {
-		padding[0] -= bvhBoxDim;
-		maxNumBVH[0]++;
+		if (cubeSize[0] < abs(radius) + abs(barycenter.pos[0])) cubeSize[0] = abs(radius) + abs(barycenter.pos[0]);
+		if (cubeSize[1] < abs(radius) + abs(barycenter.pos[1])) cubeSize[1] = abs(radius) + abs(barycenter.pos[1]);
+		if (cubeSize[2] < abs(radius) + abs(barycenter.pos[2])) cubeSize[2] = abs(radius) + abs(barycenter.pos[2]);
 	}
 
-	while (padding[1] >= bvhBoxDim) {
-		padding[1] -= bvhBoxDim;
-		maxNumBVH[1]++;
+	float sceneCentroid[3] = { 0 };
+	for (int i = 0; i < static_cast<int>(barycenters.size()); i++) {
+		sceneCentroid[0] += barycenters[i].pos[0];
+		sceneCentroid[1] += barycenters[i].pos[1];
+		sceneCentroid[2] += barycenters[i].pos[2];
 	}
+	sceneCentroid[0] /= static_cast<int>(barycenters.size());
+	sceneCentroid[1] /= static_cast<int>(barycenters.size());
+	sceneCentroid[2] /= static_cast<int>(barycenters.size());
 
-	while (padding[2] >= bvhBoxDim) {
-		padding[2] -= bvhBoxDim;
-		maxNumBVH[2]++;
-	}
+	createLinearBVH(barycenters, radii, sceneCentroid, cubeSize);
 
-	//init BVH vert lists
-	int totalMaxNumBVH = maxNumBVH[0] * maxNumBVH[1] * maxNumBVH[2];
+	return static_cast<int>(m_BVH.size());
 
-	std::cout << "Populating " << maxNumBVH[0] << "*" << maxNumBVH[1] << "*" << maxNumBVH[2] << "=" << totalMaxNumBVH << " BVH" << std::endl;
-
-	vec3 bvhpaddedmin = { 0 };
-	bvhpaddedmin[0] = vertData[minVert[0]].pos[0] - (padding[0] / 2.0f);
-	bvhpaddedmin[1] = vertData[minVert[1]].pos[1] - (padding[1] / 2.0f);
-	bvhpaddedmin[2] = vertData[minVert[2]].pos[2] - (padding[2] / 2.0f);
-
-	std::cout << "BVH starting at (" << bvhpaddedmin[0] << "," << bvhpaddedmin[1] << "," << bvhpaddedmin[2] << ")" << std::endl;
-
-	int currBVH = 0;
-	for (int x = 0; x <= maxNumBVH[0]; x++) {
-		for (int y = 0; y <= maxNumBVH[1]; y++) {
-			for (int z = 0; z <= maxNumBVH[2]; z++) {
-
-				m_BVH.push_back(BVH_BAKE());
-
-				m_BVH[currBVH].min[0] = bvhpaddedmin[0] + (x*bvhBoxDim);
-				m_BVH[currBVH].min[1] = bvhpaddedmin[1] + (y*bvhBoxDim);
-				m_BVH[currBVH].min[2] = bvhpaddedmin[2] + (z*bvhBoxDim);
-
-				m_BVH[currBVH].max[0] = bvhpaddedmin[0] + ((x + 1) * bvhBoxDim);
-				m_BVH[currBVH].max[1] = bvhpaddedmin[1] + ((y + 1) * bvhBoxDim);
-				m_BVH[currBVH].max[2] = bvhpaddedmin[2] + ((z + 1) * bvhBoxDim);
-
-				currBVH++;
-			}
-		}
-	}
-
-	int addedTris = 0;
-
-	std::cout << "Verts to BVH:" << numVerts << std::endl;
-
-	//foreach bvh, add un-added verts that intersect bvh
-	//aka. fill bvh vert lists
-	for (int i = 0; i < m_BVH.size(); i++) {
-
-		addedTris += OBJLoader::putVertsInBVH(vertData, numVerts, &m_BVH[i], 1);
-
-	}
-
-	std::cout << "Added tris to BVH: " << addedTris << std::endl;
-
-	//return totalnumber of non-zero-containing bvh
-	int numFilledBVH = 0;
-
-	for (int i = 0; i < m_BVH.size(); i++) {
-		if (m_BVH[i].hasVerts()) numFilledBVH++;
-	}
-
-	std::cout << "Filled " << numFilledBVH << " boxes from " << m_BVH.size() << " total" << std::endl;
-
-
-	int BVHPerOctree = 0;
-	for (int i = 1; i <= MAX_BVH_DEPTH; i++) {
-		BVHPerOctree += static_cast<int>(pow(8, MAX_BVH_DEPTH-i));
-	}
-
-	std::cout << BVHPerOctree << " BVH per octree with depth " << MAX_BVH_DEPTH << std::endl;
-
-	return numFilledBVH * BVHPerOctree;
 }
 
 int OBJLoader::putBVH(BVH* bvhData, BVH_BAKE* bvh, Vertex* vertData, int numVerts, int bvhIdx, int depth) {
@@ -498,6 +563,10 @@ int OBJLoader::putBVH(BVH* bvhData, BVH_BAKE* bvh, Vertex* vertData, int numVert
 	}
 	return added;
 }
+
+
+//TODO: create bounding sphere BVH list and load into bvhData
+//Traverse new bvh structure in raytracing code -> new structure + sphere bounds
 
 int OBJLoader::createBVH(BVH* bvhData, int numBVH, Vertex* vertData, int numVerts) {
 

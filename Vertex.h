@@ -32,6 +32,7 @@ struct BVH_BAKE {
 	vec3 min = { 0 };
 	vec3 max = { 0 };
 	std::vector<int> triIdx;
+	std::vector<float> radii;
 
 	bool hasVerts() {
 		return triIdx.size() > 0;
@@ -40,6 +41,22 @@ struct BVH_BAKE {
 	BVH_BAKE() {
 		triIdx = std::vector<int>();
 		children = std::vector<BVH_BAKE>();
+
+	}
+
+	BVH_BAKE(int tri, float radius) {
+		triIdx = std::vector<int>();
+		children = std::vector<BVH_BAKE>();
+		triIdx.push_back(tri);
+		radii.push_back(radius);
+	}
+
+	BVH_BAKE(BVH_BAKE* a, BVH_BAKE* b) {
+		triIdx = std::vector<int>();
+		children = std::vector<BVH_BAKE>();
+
+		children.push_back(*a);
+		children.push_back(*b);
 
 	}
 

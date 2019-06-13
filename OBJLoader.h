@@ -85,9 +85,26 @@ public:
 	static void loadVertices(Vertex* vertData, int numVerts);
 	static int countBVHNeeded(Vertex* vertData, int numVerts);
 	static int createBVH(BVH* bvhData, int numBVH, Vertex* vertData, int numVerts);
+	
 
 private:
 	
+
+	class TriangleBounds {
+	public:
+		unsigned int mortonCode;
+		int objId;
+	};
+	static bool OBJLoader::mortonCodeSort(TriangleBounds a, TriangleBounds b);
+
+	static BVH_BAKE*  OBJLoader::generateHierarchy(unsigned int* sortedMortonCodes,
+		int*          sortedObjectIDs,
+		int           first,
+		int           last,
+		float* radii,
+		int numObj);
+	static void OBJLoader::createLinearBVH(std::vector<vector3d> barycentres, std::vector<float> radii, float* sceneCentroid, float* cubeSize);
+
 	static int putBVH(BVH* bvhData, BVH_BAKE* bvh, Vertex* vertData, int numVerts, int added, int depth);
 	static int putVertsInBVH(Vertex* vertData, int numVerts, BVH_BAKE* bvh, int depth);
 
