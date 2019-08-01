@@ -8,31 +8,64 @@
 #define VERT_IMPORT_SCALE 1000.0f
 
 struct BVH {
-	vec3 min = { 0 };
-	vec3 max = { 0 };
-	int numTris;
+	//vec3 min = { 0 };
+	//vec3 max = { 0 };
+	int numTris = 0;
 	int triIdx[BVH_CHUNK_SIZE] = { 0 };
 
 	int depth = 0;
-	int children[8] = { 0 };
-	int nextOctree = -1;
+	//int children[8] = { 0 };
+	//int nextOctree = -1;
+	int front = -1;
+	int back = -1;
+	bool hasTris = false;
+	float radius = 0.0f;
+	vec3 centre = { 0 };
 
 	BVH() {
 		for (int i = 0; i < BVH_CHUNK_SIZE; i++) {
 			triIdx[i] = -1;
 		}
-		for (int i = 0; i < 8; i++) {
-			children[i] = -1;
+		//for (int i = 0; i < 8; i++) {
+		//	children[i] = -1;
+		//}
+	}
+
+	BVH(const BVH &b2) {
+		for (int i = 0; i < BVH_CHUNK_SIZE; i++) {
+			triIdx[i] = b2.triIdx[i];
 		}
+		numTris = b2.numTris;
+		depth = b2.depth;
+		front = b2.front;
+		back = b2.back;
+		hasTris = b2.hasTris;
+		radius = b2.radius;
+		centre[0] = b2.centre[0];
+		centre[1] = b2.centre[1];
+		centre[2] = b2.centre[2];
+
+
 	}
 
 };
 
 struct BVH_BAKE {
-	vec3 min = { 0 };
-	vec3 max = { 0 };
+	//vec3 min = { 0 };
+	//vec3 max = { 0 };
 	std::vector<int> triIdx;
-	std::vector<float> radii;
+	//std::vector<float> radii;
+	float radius = 0.0f;
+	vec3 centre = { 0 };
+	int depth = 0;
+	bool isActive = true;
+	int idx = -1;
+	std::vector<int> children;
+
+	~BVH_BAKE() {
+		triIdx.clear();
+		children.clear();
+	}
 
 	bool hasVerts() {
 		return triIdx.size() > 0;
@@ -40,69 +73,76 @@ struct BVH_BAKE {
 
 	BVH_BAKE() {
 		triIdx = std::vector<int>();
-		children = std::vector<BVH_BAKE>();
+		children = std::vector<int>();
+		radius = 0.0f;
+		centre[0] = 0.0f;
+		centre[1] = 0.0f;
+		centre[2] = 0.0f;
 
 	}
 
-	BVH_BAKE(int tri, float radius) {
+	BVH_BAKE(int depth, bool active) {
+		isActive = active;
+		this->depth = depth;
+		radius = 0.0f;
+		centre[0] = 0.0f;
+		centre[1] = 0.0f;
+		centre[2] = 0.0f;
+	}
+
+	BVH_BAKE(int depth, 
+		//int tri,
+		std::vector<int>* tris,
+		float radius2, float x, float y, float z) {
 		triIdx = std::vector<int>();
-		children = std::vector<BVH_BAKE>();
-		triIdx.push_back(tri);
-		radii.push_back(radius);
-	}
-
-	BVH_BAKE(BVH_BAKE* a, BVH_BAKE* b) {
-		triIdx = std::vector<int>();
-		children = std::vector<BVH_BAKE>();
-
-		children.push_back(*a);
-		children.push_back(*b);
-
-	}
-
-	std::vector<BVH_BAKE> children;
-
-	void refreshChildren() {
+		children = std::vector<int>();
 		
-		if (children.size() < 8) {
-			for (int c = 0; c < 8; c++) {
-				children.push_back(BVH_BAKE());
-			}
+		for (int i = 0; i < tris->size(); i++) {
+			triIdx.push_back(tris->at(i));
 		}
+		
+		//radii.push_back(radius);
+		radius = radius2;
 
-		vec3 xStep = { 0 };
-		vec3 yStep = { 0 };
-		vec3 zStep = { 0 };
-
-		xStep[0] = min[0];
-		yStep[0] = min[1];
-		zStep[0] = min[2];
-
-		xStep[2] = max[0];
-		yStep[2] = max[1];
-		zStep[2] = max[2];
-
-		xStep[1] = xStep[0] + ((xStep[2] - xStep[0]) / 2.0f);
-		yStep[1] = yStep[0] + ((yStep[2] - yStep[0]) / 2.0f);
-		zStep[1] = zStep[0] + ((zStep[2] - zStep[0]) / 2.0f);
-
-		int current[3] = { 0, 0, 0 };
-		for (unsigned int c = 0; c < 8; c++) {
-
-			current[0] = (c & 0b100) ? 1 : 0;
-			current[1] = (c & 0b010) ? 1 : 0;
-			current[2] = (c & 0b001) ? 1 : 0;
-
-			children[c].min[0] = xStep[current[0]];
-			children[c].min[1] = yStep[current[1]];
-			children[c].min[2] = zStep[current[2]];
-
-			children[c].max[0] = xStep[current[0]+1];
-			children[c].max[1] = yStep[current[1]+1];
-			children[c].max[2] = zStep[current[2]+1];
-
-		}
+		centre[0] = x;
+		centre[1] = y;
+		centre[2] = z;
+		this->depth = depth;
 	}
+
+	BVH_BAKE(int depth, BVH_BAKE* a, BVH_BAKE* b) {
+		triIdx = std::vector<int>();
+		children = std::vector<int>();
+
+		children.push_back(a->idx);
+		children.push_back(b->idx);
+
+		this->depth = depth;
+		//average children centres
+
+		centre[0] = (
+			((a->isActive) ? a->centre[0] : b->centre[0]) 
+			+ ((b->isActive) ? b->centre[0] : a->centre[0])) / 2;
+		centre[1] = (
+			((a->isActive) ? a->centre[1] : b->centre[1]) 
+			+ ((b->isActive) ? b->centre[1] : a->centre[1])) / 2;
+		centre[2] = (
+			((a->isActive) ? a->centre[2] : b->centre[2]) 
+			+ ((b->isActive) ? b->centre[2] : a->centre[2])) / 2;
+
+		float acentredistsq = ((a->centre[0] - centre[0])*(a->centre[0] - centre[0]))
+			+ ((a->centre[1] - centre[1])*(a->centre[1] - centre[1]))
+			+ ((a->centre[2] - centre[2])*(a->centre[2] - centre[2]));
+		float bcentredistsq = ((b->centre[0] - centre[0])*(b->centre[0] - centre[0]))
+			+ ((b->centre[1] - centre[1])*(b->centre[1] - centre[1]))
+			+ ((b->centre[2] - centre[2])*(b->centre[2] - centre[2]));
+
+		float ar = sqrtf(acentredistsq) + a->radius;
+		float br = sqrtf(bcentredistsq) + b->radius;
+		radius = (ar > br) ? ar : br;
+
+	}
+
 };
 
 struct Vertex {

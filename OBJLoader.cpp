@@ -9,6 +9,7 @@ std::vector<SObjFace> OBJLoader::m_vFaces = std::vector<SObjFace>();
 std::vector<ObjMat> OBJLoader::theMats = std::vector<ObjMat>();
 std::vector<Vertex> OBJLoader::m_distinctVerts = std::vector<Vertex>();
 std::vector<BVH_BAKE> OBJLoader::m_BVH = std::vector<BVH_BAKE>();
+std::vector<BVH> OBJLoader::bvhBACKUP = std::vector<BVH>();
 
 float dot2(vec3 l, vec3 r) {
 	return (l[0] * r[0]) + (l[1] * r[1]) + (l[2] * r[2]);
@@ -195,116 +196,6 @@ void OBJLoader::loadVertices(Vertex* vertData, int numVerts) {
 	}
 }
 
-int OBJLoader::putVertsInBVH(Vertex* vertData, int numVerts, BVH_BAKE* bvh, int depth){
-
-	int currentRedirect = -1;
-	int addedTris = 0;
-	std::vector<int> addedTriIdxList = std::vector<int>();
-
-	for (int tri = 0; tri < numVerts; tri += 3) {
-
-		//can expand to fit first triangle which does not entirely fit
-		//subsequent triangles must strictly fit
-		bool containsV1 = (
-			//x1
-			vertData[tri + 0].pos[0] >= bvh->min[0]
-			&& vertData[tri + 0].pos[0] <= bvh->max[0]
-			//y1
-			&& vertData[tri + 0].pos[1] >= bvh->min[1]
-			&& vertData[tri + 0].pos[1] <= bvh->max[1]
-			//z1
-			&& vertData[tri + 0].pos[2] >= bvh->min[2]
-			&& vertData[tri + 0].pos[2] <= bvh->max[2]
-			);
-		bool containsV2 = (
-			//x1
-			vertData[tri + 1].pos[0] >= bvh->min[0]
-			&& vertData[tri + 1].pos[0] <= bvh->max[0]
-			//y1
-			&& vertData[tri + 1].pos[1] >= bvh->min[1]
-			&& vertData[tri + 1].pos[1] <= bvh->max[1]
-			//z1
-			&& vertData[tri + 1].pos[2] >= bvh->min[2]
-			&& vertData[tri + 1].pos[2] <= bvh->max[2]
-			);
-		bool containsV3 = (
-			//x1
-			vertData[tri + 2].pos[0] >= bvh->min[0]
-			&& vertData[tri + 2].pos[0] <= bvh->max[0]
-			//y1
-			&& vertData[tri + 2].pos[1] >= bvh->min[1]
-			&& vertData[tri + 2].pos[1] <= bvh->max[1]
-			//z1
-			&& vertData[tri + 2].pos[2] >= bvh->min[2]
-			&& vertData[tri + 2].pos[2] <= bvh->max[2]
-			);
-
-
-		bool containsPartTri = containsV1 || containsV2 || containsV3;
-		bool containsWholeTri = containsV1 && containsV2 && containsV3;
-
-		bool triIntersects = false;
-#if NO_LOSS_BVH == 1
-		
-		//NOTE: triangle might intersect bvh but is so big that no verts are actually within the bvh!
-		
-		if (!containsPartTri) {
-			vec3 boxhalfsize = { 0 };
-			boxhalfsize[0] = (bvh->max[0] - bvh->min[0]) / 2.0f;
-			boxhalfsize[1] = (bvh->max[1] - bvh->min[1]) / 2.0f;
-			boxhalfsize[2] = (bvh->max[2] - bvh->min[2]) / 2.0f;
-			vec3 boxcenter = { 0 };
-			boxcenter[0] = bvh->min[0] + boxhalfsize[0];
-			boxcenter[1] = bvh->min[1] + boxhalfsize[1];
-			boxcenter[2] = bvh->min[2] + boxhalfsize[2];
-
-			triIntersects = triBoxOverlap(boxcenter, boxhalfsize, vertData[tri + 0].pos, vertData[tri + 1].pos, vertData[tri + 2].pos, vertData[tri + 0].normal);
-		}
-#endif
-		if (containsPartTri || triIntersects) {
-			bool addedAlready = false;
-
-			//NOTE: Allow adding multiple times
-			// Just check in order to keep track of the number of unique added tris
-			for (int a = 0; a < addedTriIdxList.size(); a++) {
-				if (addedTriIdxList[a] == tri) {
-					addedAlready = true;
-					break;
-				}
-			}
-			
-			if (!addedAlready) addedTris++;
-
-			//add to bvh current "chunk"
-			bvh->triIdx.push_back(tri);
-			addedTriIdxList.push_back(tri);
-		}
-	}
-
-	if (depth < MAX_BVH_DEPTH) {
-		
-		if (addedTris > 0) {
-
-			if (bvh->children.size() == 0) {
-				//Create or Recalculate child octrees
-				bvh->refreshChildren();
-			}
-
-			int addedToChildren = 0;
-
-			for (int child = 0; child < bvh->children.size(); child++) {
-				//do not account for triangles because they are already added in parent
-				addedToChildren += putVertsInBVH(vertData, numVerts, &bvh->children[child], depth + 1);
-			}
-
-			std::cout << "Added " << addedToChildren << " to children at depth " << depth << std::endl;
-
-		}
-	}
-
-	return addedTris;
-}
-
 ///////////////////////////////////////////////////////
 //Linear BVH code from: https://devblogs.nvidia.com/thinking-parallel-part-iii-tree-construction-gpu/
 ///////////////////////////////////////////////////////
@@ -349,7 +240,7 @@ int findSplit(unsigned int* sortedMortonCodes,
 	// for all objects, using the count-leading-zeros intrinsic.
 	//NOTE: Adapted for VC++
 	unsigned long commonPrefix = -1;
-	_BitScanReverse(&commonPrefix, firstCode ^ lastCode);
+	_BitScanForward(&commonPrefix, firstCode ^ lastCode);
 
 	// Use binary search to find where the next bit differs.
 	// Specifically, we are looking for the highest object that
@@ -368,8 +259,8 @@ int findSplit(unsigned int* sortedMortonCodes,
 			unsigned int splitCode = sortedMortonCodes[newSplit];
 			
 			//NOTE: Adapted for VC++
-			unsigned long splitPrefix = -1;
-			_BitScanReverse(&commonPrefix, firstCode ^ splitCode);
+			unsigned long splitPrefix = 0l;
+			_BitScanForward(&splitPrefix, firstCode ^ splitCode);
 			
 			if (splitPrefix > commonPrefix)
 				split = newSplit; // accept proposal
@@ -388,41 +279,149 @@ void OBJLoader::createLinearBVH(std::vector<vector3d> barycentres, std::vector<f
 	int num = static_cast<int>(barycentres.size());
 
 	std::vector<TriangleBounds> bounds = std::vector<TriangleBounds>();
+
+	std::vector<int> merged = std::vector<int>();
+
 	for (int i = 0; i < num; i++) {
+		
+		bool alreadyMerged = false;
+		for (int j = 0; j < static_cast<int>(merged.size()); j++) {
+			if (merged[j] == i) {
+				alreadyMerged = true;
+				break;
+			}
+		}
+		if (alreadyMerged) continue;
+		
 		TriangleBounds a = TriangleBounds();
 
 		//mortoncode relative to scene centroid (and unit size)
+		a.centre[0] = (barycentres[i].pos[0]);
+		a.centre[1] = (barycentres[i].pos[1]);
+		a.centre[2] = (barycentres[i].pos[2]);
+
+		/*
+
+	std::cout << (barycentres[i].pos[0] - sceneCentroid[0]) / cubeSize[0]
+		<< ":" << (barycentres[i].pos[1] - sceneCentroid[1]) / cubeSize[1]
+		<< ":" << (barycentres[i].pos[2] - sceneCentroid[2] )/ cubeSize[2] << std::endl;
+		*/
+
 		a.mortonCode = morton3D((barycentres[i].pos[0] - sceneCentroid[0]) / cubeSize[0], (barycentres[i].pos[1] - sceneCentroid[1]) / cubeSize[1], (barycentres[i].pos[2] - sceneCentroid[2]) / cubeSize[2]);
-		a.objId = i;
+		
+		a.objIds.push_back(i);
+
+		a.radius = radii[i];
+
+		//TODO: allow merging for less deep tree! First, bugfix traversal issues...
+		
+		/*
+		
+		for (int x = i+1; x < num; x++) {
+			
+			bool alreadyMerged2 = false;
+			for (int j2 = 0; j2 < static_cast<int>(merged.size()); j2++) {
+				if (merged[j2] == x) {
+					alreadyMerged2 = true;
+					break;
+				}
+			}
+			if (!alreadyMerged2) {
+
+				vec3 newCentre = { 0 };
+
+				newCentre[0] = (a.centre[0] + barycentres[x].pos[0]) / 2;
+				newCentre[1] = (a.centre[1] + barycentres[x].pos[1]) / 2;
+				newCentre[2] = (a.centre[2] + barycentres[x].pos[2]) / 2;
+
+				float acentredist = ((a.centre[0] - newCentre[0])*(a.centre[0] - newCentre[0]))
+					+ ((a.centre[1] - newCentre[1])*(a.centre[1] - newCentre[1]))
+					+ ((a.centre[2] - newCentre[2])*(a.centre[2] - newCentre[2]));
+				float bcentredist = ((barycentres[x].pos[0] - newCentre[0])*(barycentres[x].pos[0] - newCentre[0]))
+					+ ((barycentres[x].pos[1] - newCentre[1])*(barycentres[x].pos[1] - newCentre[1]))
+					+ ((barycentres[x].pos[2] - newCentre[2])*(barycentres[x].pos[2] - newCentre[2]));
+
+				float ar = sqrtf(acentredist) + a.radius;
+				float br = sqrtf(bcentredist) + radii[x];
+				float newRadius = (ar > br) ? ar : br;
+
+
+				//threshold for merging tris into same bvh
+				if ( (newRadius - a.radius) / newRadius <= 0.3f) {
+					merged.push_back(x);
+					a.objIds.push_back(x);
+					a.radius = (a.radius < newRadius) ? newRadius : a.radius;
+					a.centre[0] = newCentre[0];
+					a.centre[1] = newCentre[1];
+					a.centre[2] = newCentre[2];
+				}
+			}
+		}
+		*/
+		
+		
 
 		bounds.push_back(a);
 	}
 
 	unsigned int* sortedMortonCodes = new unsigned int[num];
-	int* sortedObjectIds = new int[num];
+	//int* sortedObjectIds = new int[num];
+	std::vector<int>* sortedObjectIds = new std::vector<int>[num];
+	float* sortedRadii = new float[num];
+	float* sortedCenters = new float[num * 3];
 
 	std::sort(bounds.begin(), bounds.end(), mortonCodeSort);
 
 	for (int i = 0; i < static_cast<int>(bounds.size()); i++) {
 		sortedMortonCodes[i] = bounds[i].mortonCode;
-		sortedObjectIds[i] = bounds[i].objId;
+		//sortedObjectIds[i] = bounds[i].objId;
+		sortedObjectIds[i] = bounds[i].objIds;
+
+		sortedRadii[i] = bounds[i].radius;
+		sortedCenters[(i * 3)] = bounds[i].centre[0];
+		sortedCenters[(i * 3)+1] = bounds[i].centre[1];
+		sortedCenters[(i * 3)+2] = bounds[i].centre[2];
 	}
 
-	generateHierarchy(sortedMortonCodes, sortedObjectIds, 0, num, num);
+	generateHierarchy(sortedMortonCodes, sortedObjectIds, 0, num-1, sortedRadii, sortedCenters, num, 0);
+
+	std::reverse(m_BVH.begin(), m_BVH.end());
 
 }
 
 BVH_BAKE*  OBJLoader::generateHierarchy(unsigned int* sortedMortonCodes,
-	int*          sortedObjectIDs,
+	//int*          sortedObjectIDs,
+	std::vector<int>* sortedObjectIDs,
 	int           first,
 	int           last,
 	float* radii,
-	int numObj)
+	float* centres,
+	int numObj
+,int depth)
 {
 	// Single object => create a leaf node.
 	if (first == last) {
-		int objId = (first < numObj) ? sortedObjectIDs[first] : -1;
-		return new BVH_BAKE(objId, radii[objId]);
+		//int objId = (first < numObj && first >= 0) ? sortedObjectIDs[first] : -1;
+		//if (objId != -1) {
+		if (first < numObj && sortedObjectIDs[first].size() > 0){
+			int objId = first;// sortedObjectIDs[first].at(0);
+			BVH_BAKE* leaf = new BVH_BAKE(depth, &sortedObjectIDs[first], radii[objId], centres[(objId * 3)], centres[(objId * 3) + 1], centres[(objId * 3) + 2]);
+			
+			int idx = static_cast<int>(m_BVH.size());
+			leaf->idx = idx;
+			m_BVH.push_back(*leaf);
+
+			return leaf;
+		}
+		else {
+			BVH_BAKE* leaf = new BVH_BAKE(depth, false);
+
+			int idx = static_cast<int>(m_BVH.size());
+			leaf->idx = idx;
+			m_BVH.push_back(*leaf);
+
+			return leaf;
+		}
 	}
 
 	// Determine where to split the range.
@@ -430,22 +429,20 @@ BVH_BAKE*  OBJLoader::generateHierarchy(unsigned int* sortedMortonCodes,
 
 	// Process the resulting sub-ranges recursively.
 	BVH_BAKE* childA = generateHierarchy(sortedMortonCodes, sortedObjectIDs,
-		first, split, radii, numObj);
+		first, split, radii, centres, numObj, depth+1);
 
-	
 	BVH_BAKE* childB = generateHierarchy(sortedMortonCodes, sortedObjectIDs,
-		split + 1, last, radii, numObj);
+		split + 1, last, radii, centres, numObj, depth+1);
 	
-	BVH_BAKE* parent = new BVH_BAKE(childA, childB);
 
+	int idx = static_cast<int>(m_BVH.size());
+
+	BVH_BAKE* parent = new BVH_BAKE(depth, childA, childB);
+	parent->idx = idx;
 	m_BVH.push_back(*parent);
-	m_BVH.push_back(*childA);
-	m_BVH.push_back(*childB);
 
 	return parent;
 }
-
-
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -457,7 +454,7 @@ BVH_BAKE*  OBJLoader::generateHierarchy(unsigned int* sortedMortonCodes,
 int OBJLoader::countBVHNeeded(Vertex* vertData, int numVerts) {
 
 
-	float padding = 5.0f;
+	float padding = 500.0f;
 	std::vector<float> radii = std::vector<float>();
 	std::vector<vector3d> barycenters = std::vector <vector3d> ();
 	
@@ -468,31 +465,39 @@ int OBJLoader::countBVHNeeded(Vertex* vertData, int numVerts) {
 
 	for (int i = 0; i < numVerts; i += 3) {
 		vector3d barycenter = vector3d();
+
+		//NOTE: encoding triangle-vertices indices as barycentre indices
 		barycenter.pos[0] = (vertData[i].pos[0] + vertData[i + 1].pos[0] + vertData[i + 2].pos[0]) / 3.0f;
 		barycenter.pos[1] = (vertData[i].pos[1] + vertData[i + 1].pos[1] + vertData[i + 2].pos[1]) / 3.0f;
 		barycenter.pos[2] = (vertData[i].pos[2] + vertData[i + 1].pos[2] + vertData[i + 2].pos[2]) / 3.0f;
 		barycenters.push_back(barycenter);
 		
 		float distances[3] = { 0 };
-		distances[0] = ((barycenter.pos[0] - vertData[i].pos[0]) *(barycenter.pos[0] - vertData[i].pos[0]))
-			+ ((barycenter.pos[1] - vertData[i].pos[1]) *(barycenter.pos[1] - vertData[i].pos[1]))
-			+ ((barycenter.pos[2] - vertData[i].pos[2]) *(barycenter.pos[2] - vertData[i].pos[2]));
-		distances[1] = ((barycenter.pos[0] - vertData[i+1].pos[0]) *(barycenter.pos[0] - vertData[i + 1].pos[0]))
-			+ ((barycenter.pos[1] - vertData[i + 1].pos[1]) *(barycenter.pos[1] - vertData[i + 1].pos[1]))
-			+ ((barycenter.pos[2] - vertData[i + 1].pos[2]) *(barycenter.pos[2] - vertData[i + 1].pos[2]));
-		distances[2] = ((barycenter.pos[0] - vertData[i + 2].pos[0]) *(barycenter.pos[0] - vertData[i + 2].pos[0]))
-			+ ((barycenter.pos[1] - vertData[i + 2].pos[1]) *(barycenter.pos[1] - vertData[i + 2].pos[1]))
-			+ ((barycenter.pos[2] - vertData[i + 2].pos[2]) *(barycenter.pos[2] - vertData[i + 2].pos[2]));
 		
-		float radius = sqrtf(max(max(distances[0], distances[1]), distances[2])) + padding;
+		distances[0] = ((barycenter.pos[0] - vertData[i].pos[0]) *(barycenter.pos[0] - vertData[i].pos[0]))
+					+ ((barycenter.pos[1] - vertData[i].pos[1]) *(barycenter.pos[1] - vertData[i].pos[1]))
+					+ ((barycenter.pos[2] - vertData[i].pos[2]) *(barycenter.pos[2] - vertData[i].pos[2]));
+		
+		distances[1] = ((barycenter.pos[0] - vertData[i+1].pos[0]) *(barycenter.pos[0] - vertData[i + 1].pos[0]))
+					+ ((barycenter.pos[1] - vertData[i + 1].pos[1]) *(barycenter.pos[1] - vertData[i + 1].pos[1]))
+					+ ((barycenter.pos[2] - vertData[i + 1].pos[2]) *(barycenter.pos[2] - vertData[i + 1].pos[2]));
+		
+		distances[2] = ((barycenter.pos[0] - vertData[i + 2].pos[0]) *(barycenter.pos[0] - vertData[i + 2].pos[0]))
+					+ ((barycenter.pos[1] - vertData[i + 2].pos[1]) *(barycenter.pos[1] - vertData[i + 2].pos[1]))
+					+ ((barycenter.pos[2] - vertData[i + 2].pos[2]) *(barycenter.pos[2] - vertData[i + 2].pos[2]));
+		
+		float radius = sqrtf(max(max(distances[0], distances[1]), distances[2]));// +padding;
+		std::cout << "Radius:" << radius << std::endl;
 		radii.push_back(radius);
 
-		if (cubeSize[0] < abs(radius) + abs(barycenter.pos[0])) cubeSize[0] = abs(radius) + abs(barycenter.pos[0]);
-		if (cubeSize[1] < abs(radius) + abs(barycenter.pos[1])) cubeSize[1] = abs(radius) + abs(barycenter.pos[1]);
-		if (cubeSize[2] < abs(radius) + abs(barycenter.pos[2])) cubeSize[2] = abs(radius) + abs(barycenter.pos[2]);
+		if (cubeSize[0] < abs(radius) + abs(barycenter.pos[0]*0)) cubeSize[0] = abs(radius) + abs(barycenter.pos[0] * 0);
+		if (cubeSize[1] < abs(radius) + abs(barycenter.pos[1] * 0)) cubeSize[1] = abs(radius) + abs(barycenter.pos[1] * 0);
+		if (cubeSize[2] < abs(radius) + abs(barycenter.pos[2] * 0)) cubeSize[2] = abs(radius) + abs(barycenter.pos[2] * 0);
 	}
 
 	float sceneCentroid[3] = { 0 };
+	
+	
 	for (int i = 0; i < static_cast<int>(barycenters.size()); i++) {
 		sceneCentroid[0] += barycenters[i].pos[0];
 		sceneCentroid[1] += barycenters[i].pos[1];
@@ -501,6 +506,9 @@ int OBJLoader::countBVHNeeded(Vertex* vertData, int numVerts) {
 	sceneCentroid[0] /= static_cast<int>(barycenters.size());
 	sceneCentroid[1] /= static_cast<int>(barycenters.size());
 	sceneCentroid[2] /= static_cast<int>(barycenters.size());
+	
+
+	std::cout << "Scene Centroid:" << sceneCentroid[0] << "," << sceneCentroid[1] << "," << sceneCentroid[2] << std::endl;
 
 	createLinearBVH(barycenters, radii, sceneCentroid, cubeSize);
 
@@ -508,92 +516,121 @@ int OBJLoader::countBVHNeeded(Vertex* vertData, int numVerts) {
 
 }
 
-int OBJLoader::putBVH(BVH* bvhData, BVH_BAKE* bvh, Vertex* vertData, int numVerts, int bvhIdx, int depth) {
-	
-	int added = 0;
-	if (bvh->hasVerts()) {
+int OBJLoader::getMaxDepth() {
+	int maxDepth = 0;
 
-		bvhData[bvhIdx] = BVH();
-		bvhData[bvhIdx].min[0] = bvh->min[0];
-		bvhData[bvhIdx].min[1] = bvh->min[1];
-		bvhData[bvhIdx].min[2] = bvh->min[2];
-
-		bvhData[bvhIdx].max[0] = bvh->max[0];
-		bvhData[bvhIdx].max[1] = bvh->max[1];
-		bvhData[bvhIdx].max[2] = bvh->max[2];
-
-		bvhData[bvhIdx].depth = depth;
-
-		int numTrisToAdd = static_cast<int>(bvh->triIdx.size());
-
-		std::cout << "Tris to add:" << numTrisToAdd << std::endl;
-
-		//NOTE: previously tried to add copies of the same BVH to account for this by "chunking" but not worth the complexity!
-		//Currently, select a sensible value according to the triangle density of the scene and change BVH_CHUNK_SIZE
-		if (numTrisToAdd > BVH_CHUNK_SIZE) throw new std::exception("Tried to add too many tris to BVH box");
-
-		bvhData[bvhIdx].numTris = numTrisToAdd;
-
-			for (int t = 0; t < numTrisToAdd; t++) {
-			
-				bvhData[bvhIdx].triIdx[t] = bvh->triIdx[t];
-			}
-
-		added++;
-
-		//Tail recursion gives post-order
-		//Parent -> 
-		//child1 -> grandchildren -> ... 
-		//child2 -> grandchildren -> ...
-		// ...
-		//child8 -> grandchildren -> ...
-		if (depth < MAX_BVH_DEPTH) {
-			for (int child = 0; child < bvh->children.size(); child++) {
-				
-				int descendants = putBVH(bvhData, &bvh->children[child], vertData, numVerts, bvhIdx + added, depth+1);
-				
-				//record (relative) index of child
-				if (descendants > 0) bvhData[bvhIdx].children[child] = added;
-
-				added += descendants;
-
-			}
+	for (int i = 0; i < static_cast<int>(m_BVH.size()); i++) {
+		if (m_BVH[i].depth > maxDepth) {
+			maxDepth = m_BVH[i].depth;
 		}
-
 	}
+	
+	std::cout << "Max Depth:" << maxDepth << std::endl;
+
+	return maxDepth;
+}
+
+int OBJLoader::putBVH(BVH* bvhData, BVH_BAKE* bvh, Vertex* vertData, int numVerts, int bvhIdx) {
+	
+	std::cout << "PUT:" << bvh->idx << std::endl;
+
+	//put the BVH_BAKE data into the bvh list at the given index
+
+	int added = 0;
+
+	int front = -1;
+	int back = -1;
+
+	//if the list is reversed, the indices are relative to the end
+	if (static_cast<int>(bvh->children.size()) == 2 && bvh->children[0] + bvh->children[1] >= 0){
+			
+		int total = static_cast<int>(m_BVH.size()) - 1;
+			
+		//convert from m_BVH to bvhData index, as long as child is active!
+		front = (bvh->children[0] != -1 && m_BVH[bvh->children[0]].isActive) ? total - bvh->children[0] : -1;
+		back = (bvh->children[1] != -1 && m_BVH[bvh->children[1]].isActive) ? total - bvh->children[1] : -1;
+
+		std::cout << "CHILDREN_IDX=" << bvh->children[0] << ":" << bvh->children[1] << std::endl;
+	}
+
+	int numTrisToAdd = static_cast<int>(bvh->triIdx.size());
+
+	//if no tris and no children, skip
+	//if (!bvh->isActive ||
+	if(
+		(front == -1 && back == -1 && numTrisToAdd == 0)) return 0;
+
+	bvhData[bvhIdx] = BVH();
+	bvhData[bvhIdx].radius = bvh->radius;
+	bvhData[bvhIdx].centre[0] = bvh->centre[0];
+	bvhData[bvhIdx].centre[1] = bvh->centre[1];
+	bvhData[bvhIdx].centre[2] = bvh->centre[2];
+
+	bvhData[bvhIdx].front = front;
+	bvhData[bvhIdx].back = back;
+
+	/*
+	bvhData[bvhIdx].min[0] = bvh->min[0];
+	bvhData[bvhIdx].min[1] = bvh->min[1];
+	bvhData[bvhIdx].min[2] = bvh->min[2];
+
+	bvhData[bvhIdx].max[0] = bvh->max[0];
+	bvhData[bvhIdx].max[1] = bvh->max[1];
+	bvhData[bvhIdx].max[2] = bvh->max[2];
+	*/
+
+	bvhData[bvhIdx].depth = bvh->depth;
+
+
+	std::cout << "Tris to add:" << numTrisToAdd << std::endl;
+
+	//NOTE: previously tried to add copies of the same BVH to account for this by "chunking" but not worth the complexity!
+	//Currently, select a sensible value according to the triangle density of the scene and change BVH_CHUNK_SIZE
+	if (numTrisToAdd > BVH_CHUNK_SIZE) throw new std::exception("Tried to add too many tris to BVH box");
+
+	bvhData[bvhIdx].numTris = numTrisToAdd;
+	bvhData[bvhIdx].hasTris = numTrisToAdd > 0;
+
+	for (int t = 0; t < numTrisToAdd; t++) {
+			
+		//NOTE: x3 because BVH.triIdx is the index in verts, but BVH_BAKE (see: createBVH) has the literal triangle number
+		bvhData[bvhIdx].triIdx[t] = bvh->triIdx[t]*3;
+	}
+	bvhBACKUP.push_back(bvhData[bvhIdx]);
+	added++;
+				
 	return added;
 }
 
 
 //TODO: create bounding sphere BVH list and load into bvhData
 //Traverse new bvh structure in raytracing code -> new structure + sphere bounds
-
 int OBJLoader::createBVH(BVH* bvhData, int numBVH, Vertex* vertData, int numVerts) {
 
 	int added = 0;
-	int lastAdded = -1;
-	int octree = 0;
+	//int lastAdded = -1;
+	int totalBVH = static_cast<int>(m_BVH.size());
 
-	for (int i = 0; i < m_BVH.size(); i++) {
+	for (int i = 0; i < totalBVH; i++) {
 
-		int totalAdded = putBVH(bvhData, &m_BVH[i], vertData, numVerts, added, 1);
+		int totalAdded = 0;
+		
+		totalAdded = putBVH(bvhData, &m_BVH[i], vertData, numVerts, added);
 
-		//store the next octree location (only at depth==1 and not last octree!)
-		if (totalAdded > 0) {
-			octree++;
-			bvhData[added].nextOctree = added + totalAdded;
-		}
-		lastAdded = added;
+		//lastAdded = added;
 		added += totalAdded;
 
 	}
 
-	//the last added octree has no next octree (and cannot easily determine where it will be in m_BVH)
-	bvhData[lastAdded].nextOctree = -1;
-
 	if (added > numBVH) throw new std::exception("Tried to add more BVH than expected");
 
-	return octree;
+	std::cout << "Added:" << added << std::endl;
+
+	return added;
+}
+
+void OBJLoader::freeBVHState() {
+	m_BVH.clear();
 }
 
 

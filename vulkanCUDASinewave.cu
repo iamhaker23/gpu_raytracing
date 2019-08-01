@@ -140,7 +140,7 @@
 #define UV_FILTERING_ENABLED 1
 #define UV_FILTER_SIZE 1000.0f
 
-#define USE_BVH 0
+#define USE_BVH 1
 
 /*
  *	DEFERRED_REFRESH_SQUARE_DIM only supports power-of-two values (for maximising GPU utilisation)
@@ -243,6 +243,7 @@ const int NUM_SPHERES = 6;
 int NUM_TRIS = 0;
 int NUM_BVH = 0;
 int NUM_OCTREE = 0;
+int MAX_DEPTH_SPHERE_BVH = 0;
 
 //GPU/CPU vertex data lists
 void* cudaVerts;
@@ -467,6 +468,47 @@ __device__ float intersect(Sphere sphere, vec3 &rayorig, vec3 &raydir)
 	return tmp1;
 }
 
+//Intersect sphere BV
+__device__ bool intersectSphereBV(float x, float y, float z, float r, vec3 &rayorig, vec3 &raydir)
+//, float ox, float oy, float oz, float dx, float dy, float dz)
+{
+	vec3 l = { 0 };
+	l[0] = x - rayorig[0];
+	l[1] = y - rayorig[1];
+	l[2] = z - rayorig[2];
+
+	//Shadow-caster is on the other side of the light, no shadow.
+	//if (magnitude(l) - r > maxDist) return false;
+	
+	//NOTE: return at last line for less divergence
+	float tca = dot(l, raydir);
+	if (tca < 0) return false;
+	float d2 = dot(l, l) - tca * tca;
+	if (d2 > r*r) return false;
+	return true;
+	//return !((tca < 0) || (d2 > r*r));
+}
+
+__device__ float intersectSphereBV2(float x, float y, float z, float r, vec3 &rayorig, vec3 &raydir)
+{
+	vec3 l = { 0 };
+	l[0] = x - rayorig[0];
+	l[1] = y - rayorig[1];
+	l[2] = z - rayorig[2];
+
+	float tca = dot(l, raydir);
+	if (tca < 0) return -1.0f;
+	float d2 = dot(l, l) - tca * tca;
+	if (d2 > r*r) return -1.0f;
+	float thc = sqrt((r*r) - d2);
+
+	float tmp1 = tca - thc;
+	float tmp2 = tca + thc;
+
+	if (tmp1 < 0) return tmp2;
+	return tmp1;
+}
+
 //Check whether the ray reaches and intersects the sphere
 //Used to offer early-out to the algorithm
 //Note: Debateable whether such an early-out positively affects performance in GPGPU computing...
@@ -640,7 +682,7 @@ __device__ void intersectTris(int* vertIdx, Vertex* verts, IntersectionResult* o
 
 		float A = dot(edge1, h);
 
-#ifdef CULLING 
+#if CULLING==1
 		if (A < Epsilon) continue;
 #endif
 		//nohit
@@ -762,191 +804,219 @@ __device__ void intersectTris(int* vertIdx, Vertex* verts, IntersectionResult* o
 	}
 }
 
-template<int depth>
+//template<int depth>
 __device__ void intersectBVH(BVH* bvh
-	, int numBoxes
+	, int maxDepth
 	, Vertex* verts
 	, IntersectionResult* outhit
 	, float factor
 	, int numTris
 	, float orig_x, float orig_y, float orig_z
 	, float ray_x, float ray_y, float ray_z
-	, float maxDist) {
-	
-	if (depth == 1) {
-		outhit->pos[0] = 0;
-		outhit->pos[1] = 0;
-		outhit->pos[2] = 0;
-		outhit->col[0] = 0;
-		outhit->col[1] = 0;
-		outhit->col[2] = 0;
-		outhit->normal[0] = 0;
-		outhit->normal[1] = 0;
-		outhit->normal[2] = 0;
-		outhit->triIndex = -1;
-		outhit->faceDir = 0;
-		outhit->tmin = -1;
-		outhit->uv[0] = 0;
-		outhit->uv[1] = 0;
-	}
+	, float maxDist
+	, int currentBVIdx) {
+
+
+	outhit->pos[0] = 0;
+	outhit->pos[1] = 0;
+	outhit->pos[2] = 0;
+	outhit->col[0] = 0;
+	outhit->col[1] = 0;
+	outhit->col[2] = 0;
+	outhit->normal[0] = 0;
+	outhit->normal[1] = 0;
+	outhit->normal[2] = 0;
+	outhit->triIndex = -1;
+	outhit->faceDir = 0;
+	outhit->tmin = -1;
+	outhit->uv[0] = 0;
+	outhit->uv[1] = 0;
 
 	vec3 raydir = { 0 };
 	raydir[0] = ray_x;
 	raydir[1] = ray_y;
 	raydir[2] = ray_z;
 	float raydirmag = magnitude(raydir);
-	raydir[0] = 1.0f / raydir[0];
-	raydir[1] = 1.0f / raydir[1];
-	raydir[2] = 1.0f / raydir[2];
+	raydir[0] /= raydirmag;
+	raydir[1] /= raydirmag;
+	raydir[2] /= raydirmag;
 
-	int nextOctree = -1;
+	vec3 rayorig = { 0 };
+	rayorig[0] = orig_x;
+	rayorig[1] = orig_y;
+	rayorig[2] = orig_z;
 
-	for (int i = 0; i <= numBoxes-1; i++) {
+	int stack[64] = { 0 };
+	int stackptr = 1;
+	
+	int idx = 0;
+	int list[64] = { 0 };
+	int iter = 0;
 
-		//PROBLEM: where are the root octrees? Sparsely populated...
-		//TRY: next octree in each BVH
-		//NOTE: ensures currentOctree==i when depth>1
-		//NOTE2: must use nextOctree regardless of level!
-		
-		int currentOctree = -1;
-		if (depth == 1) {
-			currentOctree = (nextOctree == -1) ? i : nextOctree;
-			if (currentOctree == -1) return;
-			nextOctree = bvh[currentOctree].nextOctree;
+	//TODO: traverse to avoid BVH holes (where we get a miss from one BV, and don't check any others which would result in a hit!)
+
+	do{
+
+		//TODO: bug - only shows some triangles from within the BVH and also, warping of triangles
+
+		bool overlapL = intersectSphereBV(bvh[bvh[currentBVIdx].front].centre[0]
+			, bvh[bvh[currentBVIdx].front].centre[1]
+			, bvh[bvh[currentBVIdx].front].centre[2]
+			, bvh[bvh[currentBVIdx].front].radius
+			//, rayorig[0], rayorig[1], rayorig[2], raydir[0], raydir[1], raydir[2])) {
+			, rayorig, raydir);
+
+		bool overlapR = intersectSphereBV(bvh[bvh[currentBVIdx].back].centre[0]
+			, bvh[bvh[currentBVIdx].back].centre[1]
+			, bvh[bvh[currentBVIdx].back].centre[2]
+			, bvh[bvh[currentBVIdx].back].radius
+			//, rayorig[0], rayorig[1], rayorig[2], raydir[0], raydir[1], raydir[2])) {
+			, rayorig, raydir);
+
+		// Query overlaps a leaf node => report collision.
+		if (overlapL && bvh[bvh[currentBVIdx].front].hasTris)
+			list[idx++] = bvh[currentBVIdx].front + 1;
+
+		if (overlapR && bvh[bvh[currentBVIdx].back].hasTris)
+			list[idx++] = bvh[currentBVIdx].back + 1;
+
+		// Query overlaps an internal node => traverse.
+		bool traverseL = (overlapL && !bvh[bvh[currentBVIdx].front].hasTris);
+		bool traverseR = (overlapR && !bvh[bvh[currentBVIdx].back].hasTris);
+
+		if (!traverseL && !traverseR)
+			currentBVIdx = stack[--stackptr]; // pop
+		else
+		{
+			currentBVIdx = (traverseL) ? bvh[currentBVIdx].front : bvh[currentBVIdx].back;
+			if (traverseL && traverseR)
+				stack[stackptr++] = bvh[currentBVIdx].back; // push
 		}
-		else {
-			currentOctree = bvh->children[i];
-			if (currentOctree == -1) continue;
-		}
-
-		//for each root octree
-		//recurse until hit at lowest level hit
-		//Parent -> 
-		//child1 -> grandchildren -> ... 
-		//child2 -> grandchildren -> ...
-		// ...
-		//child8 -> grandchildren -> ...
-
-		vec3 t0s = { 0 };
-		t0s[0] = ((bvh[currentOctree].min[0] - (orig_x)) * (raydir[0]));
-		t0s[1] = ((bvh[currentOctree].min[1] - (orig_y)) * (raydir[1]));
-		t0s[2] = ((bvh[currentOctree].min[2] - (orig_z)) * (raydir[2]));
-
-		vec3 t1s = { 0 };
-		t1s[0] = ((bvh[currentOctree].max[0] - (orig_x)) * (raydir[0]));
-		t1s[1] = ((bvh[currentOctree].max[1] - (orig_y)) * (raydir[1]));
-		t1s[2] = ((bvh[currentOctree].max[2] - (orig_z)) * (raydir[2]));
-
-		float tmin = max(min(t0s[0], t1s[0]), max(min(t0s[1], t1s[1]), min(t0s[2], t1s[2])));
-		float tmax = min(max(t0s[0], t1s[0]), min(max(t0s[1], t1s[1]), max(t0s[2], t1s[2])));
-
-		if (tmin < tmax) {
-
-			//iterate children
-			intersectBVH<depth + 1>(&bvh[currentOctree]
-				, 8
+		iter++;
+	} while (stackptr != 0 && idx >= 0 && idx < 64);// && iter < 20);
+	
+	for (int i = 0; i < 64; i++) {
+		if (list[i] - 1 >= 0) {
+			intersectTris(
+				bvh[list[i]-1].triIdx
 				, verts
 				, outhit
 				, factor
-				, numTris
+				, bvh[list[i]-1].numTris
 				, orig_x, orig_y, orig_z
 				, ray_x, ray_y, ray_z
 				, maxDist);
-
-			//TODO: can use this early-out if we can ensure finding the front-most triangle first
-			//Note: Currently, intersectTris checks depth so all intersected triangles must be tested for correct occlusion!
-			///if (outhit->triIndex != -1) return;
-
 		}
-	}
-}
-
-//Same algorithm, but instead of recursing, it intersects ray-triangles when BVH box is intersected
-template<>
-__device__ void intersectBVH<MAX_BVH_DEPTH>(BVH* bvh
-	, int numBoxes
-	, Vertex* verts
-	, IntersectionResult* outhit
-	, float factor
-	, int numTris
-	, float orig_x, float orig_y, float orig_z
-	, float ray_x, float ray_y, float ray_z
-	, float maxDist) {
-
-	vec3 raydir = { 0 };
-	raydir[0] = ray_x;
-	raydir[1] = ray_y;
-	raydir[2] = ray_z;
-	float raydirmag = magnitude(raydir);
-	raydir[0] = 1.0f / raydir[0];
-	raydir[1] = 1.0f / raydir[1];
-	raydir[2] = 1.0f / raydir[2];
-
-	int nextOctree = -1;
-	for (int i = 0; i <= numBoxes - 1; i++) {
-
-		//PROBLEM: where are the root octrees? Sparsely populated...
-		//TRY: next octree in each BVH
-		//NOTE: ensures currentOctree==i when depth>1
-		//NOTE2: must use nextOctree regardless of level!
-
-		int currentOctree = -1;
-		if (MAX_BVH_DEPTH == 1) {
-			currentOctree = (nextOctree == -1) ? i : nextOctree;
-			if (currentOctree == -1) return;
-			nextOctree = bvh[currentOctree].nextOctree;
-		}
-		else {
-			currentOctree = bvh->children[i];
-			if (currentOctree == -1) continue;
-		}
-
-		//for each root octree
-		//recurse until hit at lowest level hit
-		//Parent -> 
-		//child1 -> grandchildren -> ... 
-		//child2 -> grandchildren -> ...
-		// ...
-		//child8 -> grandchildren -> ...
-
-		vec3 t0s = { 0 };
-		t0s[0] = ((bvh[currentOctree].min[0] - (orig_x)) * (raydir[0]));
-		t0s[1] = ((bvh[currentOctree].min[1] - (orig_y)) * (raydir[1]));
-		t0s[2] = ((bvh[currentOctree].min[2] - (orig_z)) * (raydir[2]));
-
-		vec3 t1s = { 0 };
-		t1s[0] = ((bvh[currentOctree].max[0] - (orig_x)) * (raydir[0]));
-		t1s[1] = ((bvh[currentOctree].max[1] - (orig_y)) * (raydir[1]));
-		t1s[2] = ((bvh[currentOctree].max[2] - (orig_z)) * (raydir[2]));
-
-		float tmin = max(min(t0s[0], t1s[0]), max(min(t0s[1], t1s[1]), min(t0s[2], t1s[2])));
-		float tmax = min(max(t0s[0], t1s[0]), min(max(t0s[1], t1s[1]), max(t0s[2], t1s[2])));
-
-		if (tmin < tmax) {
-
-			//debug the BVH
-#if BVH_DEBUG_VISUALISATION == 1
+		/*
+		if (outhit->col[0] + outhit->col[0] + outhit->col[0] <=2) {
+			//BVH hit, but tri miss
 			outhit->col[0] = 1;
 			outhit->col[1] = 1;
-			outhit->col[2] = 0;
-#else		
-			//check triangles for any hit BVH
-			//Can't ignore further BVH boxes in case of a BVH hit but Tri miss
-			intersectTris(
-				bvh[currentOctree].triIdx
-				, verts
-				, outhit
-				, factor
-				, bvh[currentOctree].numTris
-				, orig_x, orig_y, orig_z
-				, ray_x, ray_y, ray_z
-				, maxDist);
-#endif
-			//Can do this when BVH are sorted (e.g. first hit is certain to be front-most
-			//if (outhit->triIndex >= 0) return;
+			continue;
+		}
+		else break;
+		*/
+
+	}
+	
+}
+
+/*
+template<>
+__device__ void intersectBVH<10>(BVH* bvh
+	, int maxDepth
+	, Vertex* verts
+	, IntersectionResult* outhit
+	, float factor
+	, int numTris
+	, float orig_x, float orig_y, float orig_z
+	, float ray_x, float ray_y, float ray_z
+	, float maxDist
+	, int currentBVIdx) {
+
+
+	outhit->pos[0] = 0;
+	outhit->pos[1] = 0;
+	outhit->pos[2] = 0;
+	outhit->col[0] = 0;
+	outhit->col[1] = 0;
+	outhit->col[2] = 0;
+	outhit->normal[0] = 0;
+	outhit->normal[1] = 0;
+	outhit->normal[2] = 0;
+	outhit->triIndex = -1;
+	outhit->faceDir = 0;
+	outhit->tmin = -1;
+	outhit->uv[0] = 0;
+	outhit->uv[1] = 0;
+
+	vec3 raydir = { 0 };
+	raydir[0] = ray_x;
+	raydir[1] = ray_y;
+	raydir[2] = ray_z;
+	float raydirmag = magnitude(raydir);
+	raydir[0] /= raydirmag;
+	raydir[1] /= raydirmag;
+	raydir[2] /= raydirmag;
+
+	vec3 rayorig = { 0 };
+	rayorig[0] = orig_x;
+	rayorig[1] = orig_y;
+	rayorig[2] = orig_z;
+
+	int currentFront = bvh[currentBVIdx].front;
+	int currentBack = bvh[currentBVIdx].back;
+
+	if (intersectSphereBV(bvh[currentBVIdx].centre[0]
+		, bvh[currentBVIdx].centre[1]
+		, bvh[currentBVIdx].centre[2]
+		, bvh[currentBVIdx].radius
+		//, rayorig[0], rayorig[1], rayorig[2], raydir[0], raydir[1], raydir[2])) {
+		, rayorig, raydir)) {
+
+		//outhit->col[0] = 1;
+		//outhit->col[1] = 0;
+		//outhit->col[2] = 1;
+
+		if (currentFront != -1) {
+				if ( bvh[currentFront].hasTris) {
+					intersectTris(
+						bvh[currentFront].triIdx
+						, verts
+						, outhit
+						, factor
+						, bvh[currentFront].numTris
+						, orig_x, orig_y, orig_z
+						, ray_x, ray_y, ray_z
+						, maxDist);
+				}
+				else {
+					outhit->col[0] = 1;
+					outhit->col[1] = 1;
+					outhit->col[2] = 0;
+				}
+		}
+		if (currentBack != -1) {
+			if (bvh[currentBack].hasTris) {
+				intersectTris(
+					bvh[currentBack].triIdx
+					, verts
+					, outhit
+					, factor
+					, bvh[currentBack].numTris
+					, orig_x, orig_y, orig_z
+					, ray_x, ray_y, ray_z
+					, maxDist);
+			}
+			else {
+				outhit->col[0] = 1;
+				outhit->col[1] = 1;
+				outhit->col[2] = 0;
+			}
 		}
 	}
 }
+*/
 
 #if SHAPE_MODE==0
 
@@ -956,7 +1026,7 @@ __device__ void RaytraceTris(
 	Texel* col
 	, float factor
 	, BVH* bvh
-	, int numBVH
+	, int maxDepth
 	, Vertex* verts
 	, int numTris
 	, float ray_x, float ray_y, float ray_z
@@ -972,7 +1042,7 @@ __device__ void RaytraceTris(
 	int null = 0;
 	intersectTris(&null, verts, hitlist, factor, numTris, orig_x, orig_y, orig_z, ray_x, ray_y, ray_z, -1.0f);
 #else
-	intersectBVH<1>(bvh, numBVH, verts, hitlist, factor, numTris, orig_x, orig_y, orig_z, ray_x, ray_y, ray_z, -1.0f);
+	intersectBVH(bvh, maxDepth, verts, hitlist, factor, numTris, orig_x, orig_y, orig_z, ray_x, ray_y, ray_z, -1.0f, 0);
 #endif
 
 	int tri = hitlist->triIndex;
@@ -1155,14 +1225,16 @@ __device__ void RaytraceTris(
 			, hitPos[1] + nnhit[1] * 1e-2
 			, hitPos[2] + nnhit[2] * 1e-2
 			, toLight[0], toLight[1], toLight[2]
-			, distToLight);
+			, distToLight
+			, 0);
 #else
-		intersectBVH<1>(bvh, numBVH, verts, hitlist, factor, numTris
+		intersectBVH(bvh, maxDepth, verts, hitlist, factor, numTris
 			, hitPos[0] + nnhit[0] * 1e-2
 			, hitPos[1] + nnhit[1] * 1e-2
 			, hitPos[2] + nnhit[2] * 1e-2
 			, toLight[0], toLight[1], toLight[2]
-			, distToLight);
+			, distToLight
+			,0);
 #endif
 
 		int shadowCaster = hitlist->triIndex;
@@ -1217,9 +1289,9 @@ __device__ void RaytraceTris(
 			//);
 
 			//light "power"
-			m = m * 1.5f;
+			m = m * 1.9f;
 
-			m = max(0.1f, (0.5f*(pow(spec, 10))*m) + (0.5f*m));
+			m = max(0.1f, (0.5f*(pow(spec, 20))*m) + (0.5f*m));
 			m = min(1.0f, m);
 		}
 
@@ -1382,7 +1454,7 @@ __device__ void RaytraceTris(
 			if (light_mode == 1 || light_mode == 3) RaytraceTris<depth+1>(col
 				, (1.0f - diffuseBlend) * (0.5f - fresneleffect)
 				, bvh
-				, numBVH
+				, maxDepth
 				, verts
 				, numTris
 				, refldir[0], refldir[1], refldir[2]
@@ -1396,7 +1468,7 @@ __device__ void RaytraceTris(
 			if (light_mode >= 2) RaytraceTris<depth+1>(col
 				, (1.0f - diffuseBlend) * fresneleffect
 				, bvh
-				, numBVH
+				, maxDepth
 				, verts
 				, numTris
 				, refrdir[0], refrdir[1], refrdir[2]
@@ -1407,9 +1479,10 @@ __device__ void RaytraceTris(
 				, x1, y1);
 		}
 		
+		
 		//light attenuation here
-		float lightPow = m / (0.001f * distToLight);
-		blendCol(col, m*m, lightPow*255.0f, lightPow*255.0f, lightPow*255.0f);
+		float lightPow = max(0.8f, m / (0.001f * distToLight));
+		blendCol(col, min(0.1f, m*m), lightPow*255.0f, lightPow*255.0f, lightPow*255.0f);
 
 		//float colMag = magnitude(diffCol);
 		//diffCol[0] = diffCol[0] / colMag;
@@ -1447,7 +1520,7 @@ __device__ void RaytraceTris<MAX_RAY_DEPTH>(
 	Texel* col
 	, float factor
 	, BVH* bvh
-	, int numBVH
+	, int maxDepth
 	, Vertex* verts
 	, int numTris
 	, float ray_x, float ray_y, float ray_z
@@ -1810,7 +1883,7 @@ __device__ void Raytrace<MAX_RAY_DEPTH>(Texel* col
 ///<param name = "hitlist">A pre-allocated array to store hit results into</param>
 __global__ void get_raytraced_pixels(
 	Texel* pixels
-	, BVH* bvh, int numBVH
+	, BVH* bvh, int maxDepth
 	, Vertex* verts, int numTris
 	, Sphere* spheres, int numSpheres
 	, float cam_x, float cam_y, float cam_z
@@ -1912,7 +1985,7 @@ __global__ void get_raytraced_pixels(
 			//factor to keep old color
 			, factor
 			//bvh
-			, bvh, numBVH
+			, bvh, maxDepth
 			//verts
 			, verts, numTris
 			//raydir (also acts as cam projection where smaller z = larger fov)
@@ -3209,6 +3282,9 @@ private:
 		NUM_TRIS = numVerts / 3;
 		NUM_BVH = numBVH;
 		NUM_OCTREE = numOctree;
+		MAX_DEPTH_SPHERE_BVH = OBJLoader::getMaxDepth();
+
+		OBJLoader::freeBVHState();
 
 		//Transfer vert data to GPU
 		checkCudaErrors(cudaMallocManaged((void**)&cudaVerts, numVerts * sizeof(Vertex), cudaMemAttachGlobal));
@@ -4179,11 +4255,12 @@ private:
 #if PRINT_FPS == 1
 			cudaEventRecord(start);
 #endif
+			//std::cout << "MAX_DEPTH" << MAX_DEPTH_SPHERE_BVH << std::endl;
 
 			get_raytraced_pixels << <grid, block, 0, streamToRun >> > (
 				pixelData
 				, (BVH*)cudaBVH
-				, NUM_OCTREE
+				, MAX_DEPTH_SPHERE_BVH
 				, (Vertex*)cudaVerts
 				, NUM_TRIS
 				, (Sphere*)cudaSpheres

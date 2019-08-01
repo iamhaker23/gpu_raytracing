@@ -85,28 +85,40 @@ public:
 	static void loadVertices(Vertex* vertData, int numVerts);
 	static int countBVHNeeded(Vertex* vertData, int numVerts);
 	static int createBVH(BVH* bvhData, int numBVH, Vertex* vertData, int numVerts);
-	
 
+	static void OBJLoader::freeBVHState();
+
+	static int OBJLoader::getMaxDepth();
 private:
 	
 
 	class TriangleBounds {
 	public:
 		unsigned int mortonCode;
-		int objId;
+		//int objId;
+		std::vector<int> objIds;
+		float radius;
+		vec3 centre;
+
+		TriangleBounds() {
+			objIds = std::vector<int>();
+		}
+
 	};
 	static bool OBJLoader::mortonCodeSort(TriangleBounds a, TriangleBounds b);
 
 	static BVH_BAKE*  OBJLoader::generateHierarchy(unsigned int* sortedMortonCodes,
-		int*          sortedObjectIDs,
+		//int*          sortedObjectIDs,
+		std::vector<int>* sortedObjectIDs,
 		int           first,
 		int           last,
 		float* radii,
-		int numObj);
+		float* centres,
+		int numObj
+		, int depth);
 	static void OBJLoader::createLinearBVH(std::vector<vector3d> barycentres, std::vector<float> radii, float* sceneCentroid, float* cubeSize);
 
-	static int putBVH(BVH* bvhData, BVH_BAKE* bvh, Vertex* vertData, int numVerts, int added, int depth);
-	static int putVertsInBVH(Vertex* vertData, int numVerts, BVH_BAKE* bvh, int depth);
+	static int putBVH(BVH* bvhData, BVH_BAKE* bvh, Vertex* vertData, int numVerts, int added);
 
 	static void readTriangleFaceVertTexNorm(char *line, int matId);
 	static void readFaceLine(FILE * theFile, int matId);
@@ -116,6 +128,7 @@ private:
 	static void splitFrontString(char * inputString, char * frontString, char * restString, int size);
 
 	static std::vector<BVH_BAKE> m_BVH;
+	static std::vector<BVH> OBJLoader::bvhBACKUP;
 
 	static std::vector<Vertex> m_distinctVerts;
 	static std::vector<vector3d> m_vVertices;
