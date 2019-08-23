@@ -315,9 +315,9 @@ void OBJLoader::createLinearBVH(std::vector<vector3d> barycentres, std::vector<f
 
 		//TODO: allow merging for less deep tree! First, bugfix traversal issues...
 		
-		/*
 		
-		for (int x = i+1; x < num; x++) {
+		
+		for (int x = 0; x < num; x++) {
 			
 			bool alreadyMerged2 = false;
 			for (int j2 = 0; j2 < static_cast<int>(merged.size()); j2++) {
@@ -330,9 +330,9 @@ void OBJLoader::createLinearBVH(std::vector<vector3d> barycentres, std::vector<f
 
 				vec3 newCentre = { 0 };
 
-				newCentre[0] = (a.centre[0] + barycentres[x].pos[0]) / 2;
-				newCentre[1] = (a.centre[1] + barycentres[x].pos[1]) / 2;
-				newCentre[2] = (a.centre[2] + barycentres[x].pos[2]) / 2;
+				newCentre[0] = (a.centre[0] + barycentres[x].pos[0]) / 2.0f;
+				newCentre[1] = (a.centre[1] + barycentres[x].pos[1])  / 2.0f;
+				newCentre[2] = (a.centre[2] + barycentres[x].pos[2])  / 2.0f;
 
 				float acentredist = ((a.centre[0] - newCentre[0])*(a.centre[0] - newCentre[0]))
 					+ ((a.centre[1] - newCentre[1])*(a.centre[1] - newCentre[1]))
@@ -347,17 +347,17 @@ void OBJLoader::createLinearBVH(std::vector<vector3d> barycentres, std::vector<f
 
 
 				//threshold for merging tris into same bvh
-				if ( (newRadius - a.radius) / newRadius <= 0.3f) {
+				if ( (newRadius - a.radius) / a.radius <= 0.0f) {
 					merged.push_back(x);
 					a.objIds.push_back(x);
-					a.radius = (a.radius < newRadius) ? newRadius : a.radius;
+					a.radius = ((a.radius < newRadius) ? newRadius : a.radius);
 					a.centre[0] = newCentre[0];
 					a.centre[1] = newCentre[1];
 					a.centre[2] = newCentre[2];
 				}
 			}
 		}
-		*/
+		
 		
 		
 
@@ -486,7 +486,7 @@ int OBJLoader::countBVHNeeded(Vertex* vertData, int numVerts) {
 					+ ((barycenter.pos[1] - vertData[i + 2].pos[1]) *(barycenter.pos[1] - vertData[i + 2].pos[1]))
 					+ ((barycenter.pos[2] - vertData[i + 2].pos[2]) *(barycenter.pos[2] - vertData[i + 2].pos[2]));
 		
-		float radius = sqrtf(max(max(distances[0], distances[1]), distances[2]));// +padding;
+		float radius = sqrtf(max(max(distances[0], distances[1]), distances[2])) +padding;
 		std::cout << "Radius:" << radius << std::endl;
 		radii.push_back(radius);
 

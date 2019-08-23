@@ -479,14 +479,14 @@ __device__ bool intersectSphereBV(float x, float y, float z, float r, vec3 &rayo
 
 	//Shadow-caster is on the other side of the light, no shadow.
 	//if (magnitude(l) - r > maxDist) return false;
-	
+
 	//NOTE: return at last line for less divergence
 	float tca = dot(l, raydir);
-	if (tca < 0) return false;
-	float d2 = dot(l, l) - tca * tca;
-	if (d2 > r*r) return false;
-	return true;
-	//return !((tca < 0) || (d2 > r*r));
+	//if (tca < 0) return false;
+	float d2 = dot(l, l) - (tca * tca);
+	//if (d2 > r*r) return false;
+	//return true;
+	return !((tca < 0) || (d2 > r*r));
 }
 
 __device__ float intersectSphereBV2(float x, float y, float z, float r, vec3 &rayorig, vec3 &raydir)
@@ -850,73 +850,113 @@ __device__ void intersectBVH(BVH* bvh
 	int stackptr = 1;
 	
 	int idx = 0;
-	int list[64] = { 0 };
+	int list[128] = { 0 };
 	int iter = 0;
 
 	//TODO: traverse to avoid BVH holes (where we get a miss from one BV, and don't check any others which would result in a hit!)
 
-	do{
-
-		//TODO: bug - only shows some triangles from within the BVH and also, warping of triangles
-
-		bool overlapL = intersectSphereBV(bvh[bvh[currentBVIdx].front].centre[0]
-			, bvh[bvh[currentBVIdx].front].centre[1]
-			, bvh[bvh[currentBVIdx].front].centre[2]
-			, bvh[bvh[currentBVIdx].front].radius
-			//, rayorig[0], rayorig[1], rayorig[2], raydir[0], raydir[1], raydir[2])) {
-			, rayorig, raydir);
-
-		bool overlapR = intersectSphereBV(bvh[bvh[currentBVIdx].back].centre[0]
-			, bvh[bvh[currentBVIdx].back].centre[1]
-			, bvh[bvh[currentBVIdx].back].centre[2]
-			, bvh[bvh[currentBVIdx].back].radius
-			//, rayorig[0], rayorig[1], rayorig[2], raydir[0], raydir[1], raydir[2])) {
-			, rayorig, raydir);
-
-		// Query overlaps a leaf node => report collision.
-		if (overlapL && bvh[bvh[currentBVIdx].front].hasTris)
-			list[idx++] = bvh[currentBVIdx].front + 1;
-
-		if (overlapR && bvh[bvh[currentBVIdx].back].hasTris)
-			list[idx++] = bvh[currentBVIdx].back + 1;
-
-		// Query overlaps an internal node => traverse.
-		bool traverseL = (overlapL && !bvh[bvh[currentBVIdx].front].hasTris);
-		bool traverseR = (overlapR && !bvh[bvh[currentBVIdx].back].hasTris);
-
-		if (!traverseL && !traverseR)
-			currentBVIdx = stack[--stackptr]; // pop
-		else
-		{
-			currentBVIdx = (traverseL) ? bvh[currentBVIdx].front : bvh[currentBVIdx].back;
-			if (traverseL && traverseR)
-				stack[stackptr++] = bvh[currentBVIdx].back; // push
-		}
-		iter++;
-	} while (stackptr != 0 && idx >= 0 && idx < 64);// && iter < 20);
-	
-	for (int i = 0; i < 64; i++) {
-		if (list[i] - 1 >= 0) {
-			intersectTris(
-				bvh[list[i]-1].triIdx
-				, verts
-				, outhit
-				, factor
-				, bvh[list[i]-1].numTris
-				, orig_x, orig_y, orig_z
-				, ray_x, ray_y, ray_z
-				, maxDist);
-		}
+	//Traverse tree
+	if (intersectSphereBV(bvh[currentBVIdx].centre[0]
+		, bvh[currentBVIdx].centre[1]
+		, bvh[currentBVIdx].centre[2]
+		, bvh[currentBVIdx].radius
+		//, rayorig[0], rayorig[1], rayorig[2], raydir[0], raydir[1], raydir[2])) {
+		, rayorig, raydir)) {
+		
+		
+		
+		do {
+			//To force render all tris in all BVH
 		/*
-		if (outhit->col[0] + outhit->col[0] + outhit->col[0] <=2) {
-			//BVH hit, but tri miss
-			outhit->col[0] = 1;
-			outhit->col[1] = 1;
-			continue;
-		}
-		else break;
-		*/
+		for (int i = 0; i < 71; i++) {
+			if (intersectSphereBV(bvh[i].centre[0]
+				, bvh[i].centre[1]
+				, bvh[i].centre[2]
+				, bvh[i].radius
+				//, rayorig[0], rayorig[1], rayorig[2], raydir[0], raydir[1], raydir[2])) {
+				, rayorig, raydir)) {
+				intersectTris(
+					bvh[i].triIdx
+					, verts
+					, outhit
+					, factor
+					, bvh[i].numTris
+					, orig_x, orig_y, orig_z
+					, ray_x, ray_y, ray_z
+					, maxDist);
+			}
+			*/
+			//TODO: bug - only shows some triangles from within the BVH and also, warping of triangles
+			int front = bvh[currentBVIdx].front;
+			int back = bvh[currentBVIdx].back;
 
+			bool overlapL = (front > -1) ? intersectSphereBV(bvh[front].centre[0]
+				, bvh[front].centre[1]
+				, bvh[front].centre[2]
+				, bvh[front].radius
+				//, rayorig[0], rayorig[1], rayorig[2], raydir[0], raydir[1], raydir[2])) {
+				, rayorig, raydir) : false;
+
+			bool overlapR = (back > -1) ? intersectSphereBV(bvh[back].centre[0]
+				, bvh[back].centre[1]
+				, bvh[back].centre[2]
+				, bvh[back].radius
+				//, rayorig[0], rayorig[1], rayorig[2], raydir[0], raydir[1], raydir[2])) {
+				, rayorig, raydir) : false;
+
+			// Query overlaps a leaf node => report collision.
+			if (overlapL ){//&& bvh[bvh[currentBVIdx].front].hasTris) {
+				list[idx++] = front + 1;
+			}
+
+			if (overlapR) {//&& bvh[bvh[currentBVIdx].back].hasTris) {
+				list[idx++] = back + 1;
+			}
+
+			// Query overlaps an internal node => traverse.
+			bool traverseL = (overlapL && !bvh[front].hasTris);
+			bool traverseR = (overlapR && !bvh[back].hasTris);
+
+			if (!traverseL && !traverseR) {
+				currentBVIdx = stack[--stackptr]; // pop
+			}
+			else
+			{
+				currentBVIdx = (traverseL) ? front : back;
+				if (traverseL && traverseR) {
+					stack[stackptr++] = back; // push
+				}
+			}
+			iter++;
+		} while (stackptr > 0 && idx < 128);// && iter < 20);
+		
+		for (int i = 0; i < 128; i++) {
+
+
+			//traverse BVH hits 
+
+			if (list[i] - 1 >= 0) {
+				intersectTris(
+					bvh[list[i] - 1].triIdx
+					, verts
+					, outhit
+					, factor
+					, bvh[list[i] - 1].numTris
+					, orig_x, orig_y, orig_z
+					, ray_x, ray_y, ray_z
+					, maxDist);
+			}
+			/*
+			if (outhit->col[0] + outhit->col[0] + outhit->col[0] <=2) {
+				//BVH hit, but tri miss
+				outhit->col[0] = 1;
+				outhit->col[1] = 1;
+			}
+			else break;
+			*/
+			
+
+		}
 	}
 	
 }
@@ -1034,15 +1074,16 @@ __device__ void RaytraceTris(
 	, float light_x, float light_y, float light_z
 	, IntersectionResult* hitlist
 	, int light_mode
-	, float x1, float y1)
+	, float x1, float y1
+	, float noiseVal)
 {
 
 
 #if USE_BVH == 0
 	int null = 0;
-	intersectTris(&null, verts, hitlist, factor, numTris, orig_x, orig_y, orig_z, ray_x, ray_y, ray_z, -1.0f);
+	intersectTris(&null, verts, hitlist, factor, numTris, orig_x+noiseVal, orig_y-noiseVal, orig_z, ray_x, ray_y, ray_z, -1.0f);
 #else
-	intersectBVH(bvh, maxDepth, verts, hitlist, factor, numTris, orig_x, orig_y, orig_z, ray_x, ray_y, ray_z, -1.0f, 0);
+	intersectBVH(bvh, maxDepth, verts, hitlist, factor, numTris, orig_x+noiseVal, orig_y-noiseVal, orig_z, ray_x, ray_y, ray_z, -1.0f, 0);
 #endif
 
 	int tri = hitlist->triIndex;
@@ -1226,22 +1267,116 @@ __device__ void RaytraceTris(
 			, hitPos[2] + nnhit[2] * 1e-2
 			, toLight[0], toLight[1], toLight[2]
 			, distToLight
-			, 0);
+			, 0);//ambient light factor
+		
 #else
+		//commented: area light attempt
+		//float m2 = 0.1f;
+		
 		intersectBVH(bvh, maxDepth, verts, hitlist, factor, numTris
 			, hitPos[0] + nnhit[0] * 1e-2
 			, hitPos[1] + nnhit[1] * 1e-2
 			, hitPos[2] + nnhit[2] * 1e-2
-			, toLight[0], toLight[1], toLight[2]
+			, toLight[0], toLight[1] , toLight[2]
 			, distToLight
-			,0);
-#endif
+			, 0);//ambient light factor
 
+		/*
 		int shadowCaster = hitlist->triIndex;
+		
+		// no shadow caster, do shading
+		if (shadowCaster == -1 || shadowCaster == tri) {
 
-		//ambient light factor
+			m = max(m, (dot(nnhit, lightRayDir))
+			);
+
+			vec3 halfwayDir = { 0 };
+			halfwayDir[0] = (lightRayDir[0]) + (raydir[0]);
+			halfwayDir[1] = (lightRayDir[1]) + (raydir[1]);
+			halfwayDir[2] = (lightRayDir[2]) + (raydir[2]);
+			float hwdmag = magnitude(halfwayDir);
+			halfwayDir[0] /= hwdmag;
+			halfwayDir[1] /= hwdmag;
+			halfwayDir[2] /= hwdmag;
+
+			float spec = //max(
+				max(dot(nnhit, halfwayDir), 0.0f);
+
+			//m = m * 1.9f;
+
+			//m = max(0.1f, (0.5f*(pow(spec, 20))*m) + (0.5f*m));
+			//m = min(1.0f, m);
+		}
+		
+		intersectBVH(bvh, maxDepth, verts, hitlist, factor, numTris
+			, hitPos[0] + nnhit[0] * 1e-2
+			, hitPos[1] + nnhit[1] * 1e-2
+			, hitPos[2] + nnhit[2] * 1e-2
+			, toLight[0] - (noiseVal*20.0f), toLight[1] - (noiseVal*20.0f), toLight[2] - (noiseVal*20.0f)
+			, distToLight
+			, 0);
+
+		int shadowCaster = hitlist->triIndex;// no shadow caster, do shading
+		if (shadowCaster == -1 || shadowCaster == tri) {
+
+			m = max(m, (dot(nnhit, lightRayDir))
+			);
+
+			vec3 halfwayDir = { 0 };
+			halfwayDir[0] = (lightRayDir[0]) + (raydir[0]);
+			halfwayDir[1] = (lightRayDir[1]) + (raydir[1]);
+			halfwayDir[2] = (lightRayDir[2]) + (raydir[2]);
+			float hwdmag = magnitude(halfwayDir);
+			halfwayDir[0] /= hwdmag;
+			halfwayDir[1] /= hwdmag;
+			halfwayDir[2] /= hwdmag;
+
+			float spec = //max(
+				max(dot(nnhit, halfwayDir), 0.0f);
+
+			m = m * 1.9f;
+
+			m = max(0.1f, (0.5f*(pow(spec, 20))*m) + (0.5f*m));
+			m = min(1.0f, m);
+		}
+
+		intersectBVH(bvh, maxDepth, verts, hitlist, factor, numTris
+			, hitPos[0] + nnhit[0] * 1e-2
+			, hitPos[1] + nnhit[1] * 1e-2
+			, hitPos[2] + nnhit[2] * 1e-2
+			, toLight[0] + (noiseVal*50.0f) , toLight[1] - (noiseVal*50.0f), toLight[2] + (noiseVal*50.0f)
+			, distToLight
+			, 0);
+
+		shadowCaster = hitlist->triIndex;// no shadow caster, do shading
+		if (shadowCaster == -1 || shadowCaster == tri) {
+
+			m2 = max(m2, (dot(nnhit, lightRayDir))
+			);
+
+			vec3 halfwayDir = { 0 };
+			halfwayDir[0] = (lightRayDir[0]) + (raydir[0]);
+			halfwayDir[1] = (lightRayDir[1]) + (raydir[1]);
+			halfwayDir[2] = (lightRayDir[2]) + (raydir[2]);
+			float hwdmag = magnitude(halfwayDir);
+			halfwayDir[0] /= hwdmag;
+			halfwayDir[1] /= hwdmag;
+			halfwayDir[2] /= hwdmag;
+
+			float spec = //max(
+				max(dot(nnhit, halfwayDir), 0.0f);
+
+			m2 = m2 * 1.9f;
+			m2 = max(0.1f, (0.5f*(pow(spec, 20))*m2) + (0.5f*m2));
+			m2 = min(1.0f, m2);
+
+		}
+
+		m = (m + m2) / 2.0f;
+		*/
+#endif
 		float m = 0.1f;
-
+		int shadowCaster = hitlist->triIndex;
 		// no shadow caster, do shading
 		if (shadowCaster == -1 || shadowCaster == tri) {
 
@@ -1253,9 +1388,9 @@ __device__ void RaytraceTris(
 			*/
 
 			//Fix: removed double-sided lighting
-			m = max(m,(dot(nnhit, lightRayDir))
+			m = max(m, (dot(nnhit, lightRayDir))
 			);
-			
+
 			/*
 			vec3 raydirTang = { 0 };
 			raydirTang[0] = raydir[0];
@@ -1274,9 +1409,9 @@ __device__ void RaytraceTris(
 			//halfwayDir[0] = (toLight[0] * distToLight) + (raydir[0] * raydirmag);
 			//halfwayDir[1] = (toLight[1] * distToLight)  + (raydir[1] * raydirmag);
 			//halfwayDir[2] = (toLight[2] * distToLight) + (raydir[2] * raydirmag);
-			halfwayDir[0] = (lightRayDir[0] ) + (raydir[0]);
-			halfwayDir[1] = (lightRayDir[1] ) + (raydir[1]);
-			halfwayDir[2] = (lightRayDir[2] ) + (raydir[2]);
+			halfwayDir[0] = (lightRayDir[0]) + (raydir[0]);
+			halfwayDir[1] = (lightRayDir[1]) + (raydir[1]);
+			halfwayDir[2] = (lightRayDir[2]) + (raydir[2]);
 			float hwdmag = magnitude(halfwayDir);
 			halfwayDir[0] /= hwdmag;
 			halfwayDir[1] /= hwdmag;
@@ -1285,16 +1420,15 @@ __device__ void RaytraceTris(
 			//TODO: variable shininess using pow and exponent
 			float spec = //max(
 				max(dot(nnhit, halfwayDir), 0.0f);
-				//, abs(dot(halfwayDir, nnnhit))
-			//);
+			//, abs(dot(halfwayDir, nnnhit))
+		//);
 
-			//light "power"
+		//light "power"
 			m = m * 1.9f;
 
 			m = max(0.1f, (0.5f*(pow(spec, 20))*m) + (0.5f*m));
 			m = min(1.0f, m);
 		}
-
 		/*
 		setCol(col
 			, 255 * diffCol[0] * m
@@ -1462,7 +1596,8 @@ __device__ void RaytraceTris(
 				, light_x, light_y, light_z
 				, hitlist
 				, light_mode
-				, x1, y1);
+				, x1, y1
+				, noiseVal*noiseVal);
 			//raytrace refr
 			//factor = (1.0f - diffuseBlend) * (1 - fresneleffect) * transp
 			if (light_mode >= 2) RaytraceTris<depth+1>(col
@@ -1476,13 +1611,14 @@ __device__ void RaytraceTris(
 				, light_x, light_y, light_z
 				, hitlist
 				, light_mode
-				, x1, y1);
+				, x1, y1
+				, noiseVal*noiseVal);
 		}
 		
 		
 		//light attenuation here
 		float lightPow = max(0.8f, m / (0.001f * distToLight));
-		blendCol(col, min(0.1f, m*m), lightPow*255.0f, lightPow*255.0f, lightPow*255.0f);
+		blendCol(col, min(0.25f, m*m), lightPow*255.0f, lightPow*255.0f, lightPow*255.0f);
 
 		//float colMag = magnitude(diffCol);
 		//diffCol[0] = diffCol[0] / colMag;
@@ -1528,7 +1664,8 @@ __device__ void RaytraceTris<MAX_RAY_DEPTH>(
 	, float light_x, float light_y, float light_z
 	, IntersectionResult* hitlist
 	, int light_mode
-	, float x1, float y1)
+	, float x1, float y1
+	, float noiseVal)
 {
 
 	float4 bgTex = tex2D(cudaTex3, (x1 + (WIDTH / 2)) / WIDTH, (y1 + (HEIGHT / 2)) / HEIGHT);
@@ -1978,7 +2115,7 @@ __global__ void get_raytraced_pixels(
 
 		int pixelIdx = (y_int * WIDTH) + (x_int);
 		float stocasticNoise = (pixels[pixelIdx].col[0] + pixels[pixelIdx].col[1] + pixels[pixelIdx].col[2]) / (3.0f * 255.0f);
-
+		//float stocasticNoise2 = stocasticNoise * 50.0f;
 		RaytraceTris<1>(
 			//image
 			&pixels[(y_int * WIDTH) + (x_int)]
@@ -1989,13 +2126,14 @@ __global__ void get_raytraced_pixels(
 			//verts
 			, verts, numTris
 			//raydir (also acts as cam projection where smaller z = larger fov)
-			, x + stocasticNoise, y - stocasticNoise, ZFAR_TRIANGLE_RT
+			, x, y, ZFAR_TRIANGLE_RT
 			//cam pos
 			, cam_x, cam_y, cam_z
 			, light_x, light_y, light_z
 			, &hitlist[(raw_y * (WIDTH / (squareDim))) + (raw_x)]
 			, light_mode
 			, x, y
+			, stocasticNoise
 			);
 
 #endif
