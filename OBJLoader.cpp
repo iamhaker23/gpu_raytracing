@@ -274,7 +274,7 @@ bool OBJLoader::mortonCodeSort(TriangleBounds a, TriangleBounds b) {
 	return a.mortonCode > b.mortonCode;
 }
 
-void OBJLoader::createLinearBVH(std::vector<vector3d> barycentres, std::vector<float> radii, float* sceneCentroid, float* cubeSize) {
+void OBJLoader::createLinearBVH(std::vector<vector3d> barycentres, std::vector<vector3d> maxCorners, float* sceneCentroid, float* cubeSize) {
 
 	int num = static_cast<int>(barycentres.size());
 
@@ -311,12 +311,12 @@ void OBJLoader::createLinearBVH(std::vector<vector3d> barycentres, std::vector<f
 		
 		a.objIds.push_back(i);
 
-		a.radius = radii[i];
+		//a.radius = radii[i];
+		a.maxCorner[0] = maxCorners[i].pos[0];
+		a.maxCorner[1] = maxCorners[i].pos[1];
+		a.maxCorner[2] = maxCorners[i].pos[2];
 
-		//TODO: allow merging for less deep tree! First, bugfix traversal issues...
-		
-		
-		
+	
 		for (int x = 0; x < num; x++) {
 			
 			bool alreadyMerged2 = false;
@@ -326,7 +326,7 @@ void OBJLoader::createLinearBVH(std::vector<vector3d> barycentres, std::vector<f
 					break;
 				}
 			}
-			if (!alreadyMerged2) {
+			if (alreadyMerged2) {
 
 				vec3 newCentre = { 0 };
 
@@ -334,23 +334,33 @@ void OBJLoader::createLinearBVH(std::vector<vector3d> barycentres, std::vector<f
 				newCentre[1] = (a.centre[1] + barycentres[x].pos[1])  / 2.0f;
 				newCentre[2] = (a.centre[2] + barycentres[x].pos[2])  / 2.0f;
 
-				float acentredist = ((a.centre[0] - newCentre[0])*(a.centre[0] - newCentre[0]))
-					+ ((a.centre[1] - newCentre[1])*(a.centre[1] - newCentre[1]))
-					+ ((a.centre[2] - newCentre[2])*(a.centre[2] - newCentre[2]));
-				float bcentredist = ((barycentres[x].pos[0] - newCentre[0])*(barycentres[x].pos[0] - newCentre[0]))
-					+ ((barycentres[x].pos[1] - newCentre[1])*(barycentres[x].pos[1] - newCentre[1]))
-					+ ((barycentres[x].pos[2] - newCentre[2])*(barycentres[x].pos[2] - newCentre[2]));
+				vec3 acentredist = { 0 };
+				acentredist[0] = ((a.centre[0] - newCentre[0])*(a.centre[0] - newCentre[0]));
+				acentredist[1] = ((a.centre[1] - newCentre[1]) *(a.centre[1] - newCentre[1]));
+				acentredist[2] = ((a.centre[2] - newCentre[2]) *(a.centre[2] - newCentre[2]));
+				vec3 bcentredist = { 0 };
+				bcentredist[0] = ((barycentres[x].pos[0] - newCentre[0]) *(barycentres[x].pos[0] - newCentre[0]));
+				bcentredist[1] = ((barycentres[x].pos[1] - newCentre[1]) *(barycentres[x].pos[1] - newCentre[1]));
+				bcentredist[2] = ((barycentres[x].pos[2] - newCentre[2]) *(barycentres[x].pos[2] - newCentre[2]));
 
-				float ar = sqrtf(acentredist) + a.radius;
-				float br = sqrtf(bcentredist) + radii[x];
+				float aBoxSize = sqrtf((a.maxCorner[0] * a.maxCorner[0]) + (a.maxCorner[1] * a.maxCorner[1]) + (a.maxCorner[2] * a.maxCorner[2]));
+				float mergableBoxSize = sqrtf((maxCorners[x].pos[0] * maxCorners[x].pos[0]) + (maxCorners[x].pos[1] * maxCorners[x].pos[1]) + (maxCorners[x].pos[2] * maxCorners[x].pos[2]));
+				
+				//radius is length from centre to cube corner
+				float ar = sqrtf(acentredist[0] + acentredist[1] + acentredist[2]) + aBoxSize;
+				float br = sqrtf(bcentredist[0] + bcentredist[1] + bcentredist[2]) + mergableBoxSize;
 				float newRadius = (ar > br) ? ar : br;
-
 
 				//threshold for merging tris into same bvh
 				if ( (newRadius - a.radius) / a.radius <= 0.0f) {
 					merged.push_back(x);
 					a.objIds.push_back(x);
-					a.radius = ((a.radius < newRadius) ? newRadius : a.radius);
+					//a.radius = ((a.radius < newRadius) ? newRadius : a.radius);
+
+					a.maxCorner[0] = (ar < br) ? ((barycentres[x].pos[0] - newCentre[0]) + maxCorners[x].pos[0]) : a.maxCorner[0];
+					a.maxCorner[1] = (ar < br) ? ((barycentres[x].pos[1] - newCentre[1]) + maxCorners[x].pos[1]) : a.maxCorner[1];
+					a.maxCorner[2] = (ar < br) ? ((barycentres[x].pos[2] - newCentre[2]) + maxCorners[x].pos[2]) : a.maxCorner[2];
+
 					a.centre[0] = newCentre[0];
 					a.centre[1] = newCentre[1];
 					a.centre[2] = newCentre[2];
@@ -368,6 +378,7 @@ void OBJLoader::createLinearBVH(std::vector<vector3d> barycentres, std::vector<f
 	//int* sortedObjectIds = new int[num];
 	std::vector<int>* sortedObjectIds = new std::vector<int>[num];
 	float* sortedRadii = new float[num];
+	vec3* sortedCorners = new vec3[num];
 	float* sortedCenters = new float[num * 3];
 
 	std::sort(bounds.begin(), bounds.end(), mortonCodeSort);
@@ -378,12 +389,17 @@ void OBJLoader::createLinearBVH(std::vector<vector3d> barycentres, std::vector<f
 		sortedObjectIds[i] = bounds[i].objIds;
 
 		sortedRadii[i] = bounds[i].radius;
+		sortedCorners[i][0] = bounds[i].maxCorner[0];
+		sortedCorners[i][1] = bounds[i].maxCorner[1];
+		sortedCorners[i][2] = bounds[i].maxCorner[2];
+
+
 		sortedCenters[(i * 3)] = bounds[i].centre[0];
 		sortedCenters[(i * 3)+1] = bounds[i].centre[1];
 		sortedCenters[(i * 3)+2] = bounds[i].centre[2];
 	}
 
-	generateHierarchy(sortedMortonCodes, sortedObjectIds, 0, num-1, sortedRadii, sortedCenters, num, 0);
+	generateHierarchy(sortedMortonCodes, sortedObjectIds, 0, num-1, sortedCorners, sortedCenters, num, 0);
 
 	std::reverse(m_BVH.begin(), m_BVH.end());
 
@@ -394,7 +410,7 @@ BVH_BAKE*  OBJLoader::generateHierarchy(unsigned int* sortedMortonCodes,
 	std::vector<int>* sortedObjectIDs,
 	int           first,
 	int           last,
-	float* radii,
+	vec3* maxCorners,
 	float* centres,
 	int numObj
 ,int depth)
@@ -405,7 +421,7 @@ BVH_BAKE*  OBJLoader::generateHierarchy(unsigned int* sortedMortonCodes,
 		//if (objId != -1) {
 		if (first < numObj && sortedObjectIDs[first].size() > 0){
 			int objId = first;// sortedObjectIDs[first].at(0);
-			BVH_BAKE* leaf = new BVH_BAKE(depth, &sortedObjectIDs[first], radii[objId], centres[(objId * 3)], centres[(objId * 3) + 1], centres[(objId * 3) + 2]);
+			BVH_BAKE* leaf = new BVH_BAKE(depth, &sortedObjectIDs[first], maxCorners[objId], centres[(objId * 3)], centres[(objId * 3) + 1], centres[(objId * 3) + 2]);
 			
 			int idx = static_cast<int>(m_BVH.size());
 			leaf->idx = idx;
@@ -429,10 +445,10 @@ BVH_BAKE*  OBJLoader::generateHierarchy(unsigned int* sortedMortonCodes,
 
 	// Process the resulting sub-ranges recursively.
 	BVH_BAKE* childA = generateHierarchy(sortedMortonCodes, sortedObjectIDs,
-		first, split, radii, centres, numObj, depth+1);
+		first, split, maxCorners, centres, numObj, depth+1);
 
 	BVH_BAKE* childB = generateHierarchy(sortedMortonCodes, sortedObjectIDs,
-		split + 1, last, radii, centres, numObj, depth+1);
+		split + 1, last, maxCorners, centres, numObj, depth+1);
 	
 
 	int idx = static_cast<int>(m_BVH.size());
@@ -455,7 +471,8 @@ int OBJLoader::countBVHNeeded(Vertex* vertData, int numVerts) {
 
 
 	float padding = 500.0f;
-	std::vector<float> radii = std::vector<float>();
+	//std::vector<float> radii = std::vector<float>();
+	std::vector<vector3d> maxCorners = std::vector<vector3d>();
 	std::vector<vector3d> barycenters = std::vector <vector3d> ();
 	
 	float* cubeSize = new float[3];
@@ -488,11 +505,17 @@ int OBJLoader::countBVHNeeded(Vertex* vertData, int numVerts) {
 		
 		float radius = sqrtf(max(max(distances[0], distances[1]), distances[2])) +padding;
 		std::cout << "Radius:" << radius << std::endl;
-		radii.push_back(radius);
 
-		if (cubeSize[0] < abs(radius) + abs(barycenter.pos[0]*0)) cubeSize[0] = abs(radius) + abs(barycenter.pos[0] * 0);
-		if (cubeSize[1] < abs(radius) + abs(barycenter.pos[1] * 0)) cubeSize[1] = abs(radius) + abs(barycenter.pos[1] * 0);
-		if (cubeSize[2] < abs(radius) + abs(barycenter.pos[2] * 0)) cubeSize[2] = abs(radius) + abs(barycenter.pos[2] * 0);
+
+		vector3d maxCorner = vector3d();
+		maxCorner.pos[0] = sqrtf(distances[0]);
+		maxCorner.pos[1] = sqrtf(distances[1]);
+		maxCorner.pos[2] = sqrtf(distances[2]);
+		maxCorners.push_back(maxCorner);
+
+		if (cubeSize[0] < abs(distances[0]) + abs(barycenter.pos[0])) cubeSize[0] = abs(distances[0]) + abs(barycenter.pos[0] );
+		if (cubeSize[1] < abs(distances[1]) + abs(barycenter.pos[1])) cubeSize[1] = abs(distances[1]) + abs(barycenter.pos[1] );
+		if (cubeSize[2] < abs(distances[2]) + abs(barycenter.pos[2])) cubeSize[2] = abs(distances[2]) + abs(barycenter.pos[2] );
 	}
 
 	float sceneCentroid[3] = { 0 };
@@ -510,7 +533,7 @@ int OBJLoader::countBVHNeeded(Vertex* vertData, int numVerts) {
 
 	std::cout << "Scene Centroid:" << sceneCentroid[0] << "," << sceneCentroid[1] << "," << sceneCentroid[2] << std::endl;
 
-	createLinearBVH(barycenters, radii, sceneCentroid, cubeSize);
+	createLinearBVH(barycenters, maxCorners, sceneCentroid, cubeSize);
 
 	return static_cast<int>(m_BVH.size());
 
@@ -561,7 +584,12 @@ int OBJLoader::putBVH(BVH* bvhData, BVH_BAKE* bvh, Vertex* vertData, int numVert
 		(front == -1 && back == -1 && numTrisToAdd == 0)) return 0;
 
 	bvhData[bvhIdx] = BVH();
-	bvhData[bvhIdx].radius = bvh->radius;
+	
+	//bvhData[bvhIdx].radius = bvh->radius;
+	bvhData[bvhIdx].maxCorner[0] = bvh->maxCorner[0];
+	bvhData[bvhIdx].maxCorner[1] = bvh->maxCorner[1];
+	bvhData[bvhIdx].maxCorner[2] = bvh->maxCorner[2];
+
 	bvhData[bvhIdx].centre[0] = bvh->centre[0];
 	bvhData[bvhIdx].centre[1] = bvh->centre[1];
 	bvhData[bvhIdx].centre[2] = bvh->centre[2];

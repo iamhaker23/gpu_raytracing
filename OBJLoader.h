@@ -98,6 +98,7 @@ private:
 		//int objId;
 		std::vector<int> objIds;
 		float radius;
+		vec3 maxCorner;
 		vec3 centre;
 
 		TriangleBounds() {
@@ -112,11 +113,11 @@ private:
 		std::vector<int>* sortedObjectIDs,
 		int           first,
 		int           last,
-		float* radii,
+		vec3* maxCorners,
 		float* centres,
 		int numObj
 		, int depth);
-	static void OBJLoader::createLinearBVH(std::vector<vector3d> barycentres, std::vector<float> radii, float* sceneCentroid, float* cubeSize);
+	static void OBJLoader::createLinearBVH(std::vector<vector3d> barycentres, std::vector<vector3d> maxCorners, float* sceneCentroid, float* cubeSize);
 
 	static int putBVH(BVH* bvhData, BVH_BAKE* bvh, Vertex* vertData, int numVerts, int added);
 

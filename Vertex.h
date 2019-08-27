@@ -19,7 +19,8 @@ struct BVH {
 	int front = -1;
 	int back = -1;
 	bool hasTris = false;
-	float radius = 0.0f;
+	//float radius = 0.0f;
+	vec3 maxCorner = { 0 };
 	vec3 centre = { 0 };
 
 	BVH() {
@@ -40,7 +41,10 @@ struct BVH {
 		front = b2.front;
 		back = b2.back;
 		hasTris = b2.hasTris;
-		radius = b2.radius;
+		//radius = b2.radius;
+		maxCorner[0] = b2.maxCorner[0];
+		maxCorner[1] = b2.maxCorner[1];
+		maxCorner[2] = b2.maxCorner[2];
 		centre[0] = b2.centre[0];
 		centre[1] = b2.centre[1];
 		centre[2] = b2.centre[2];
@@ -61,6 +65,7 @@ struct BVH_BAKE {
 	bool isActive = true;
 	int idx = -1;
 	std::vector<int> children;
+	vec3 maxCorner = { 0 };
 
 	~BVH_BAKE() {
 		triIdx.clear();
@@ -93,7 +98,7 @@ struct BVH_BAKE {
 	BVH_BAKE(int depth, 
 		//int tri,
 		std::vector<int>* tris,
-		float radius2, float x, float y, float z) {
+		vec3 maxCorner, float x, float y, float z) {
 		triIdx = std::vector<int>();
 		children = std::vector<int>();
 		
@@ -102,7 +107,10 @@ struct BVH_BAKE {
 		}
 		
 		//radii.push_back(radius);
-		radius = radius2;
+		//radius = radius2;
+		this->maxCorner[0] = maxCorner[0];
+		this->maxCorner[1] = maxCorner[1];
+		this->maxCorner[2] = maxCorner[2];
 
 		centre[0] = x;
 		centre[1] = y;

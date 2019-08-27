@@ -468,46 +468,11 @@ __device__ float intersect(Sphere sphere, vec3 &rayorig, vec3 &raydir)
 	return tmp1;
 }
 
-//Intersect sphere BV
-__device__ bool intersectSphereBV(float x, float y, float z, float r, vec3 &rayorig, vec3 &raydir)
-//, float ox, float oy, float oz, float dx, float dy, float dz)
-{
-	vec3 l = { 0 };
-	l[0] = x - rayorig[0];
-	l[1] = y - rayorig[1];
-	l[2] = z - rayorig[2];
+__device__ bool intersectBox(float x, float y, float z, float x2, float y2, float z2, vec3 &rayorig, vec3 &raydir) {
 
-	//Shadow-caster is on the other side of the light, no shadow.
-	//if (magnitude(l) - r > maxDist) return false;
-
-	//NOTE: return at last line for less divergence
-	float tca = dot(l, raydir);
-	//if (tca < 0) return false;
-	float d2 = dot(l, l) - (tca * tca);
-	//if (d2 > r*r) return false;
-	//return true;
-	return !((tca < 0) || (d2 > r*r));
+	return true;
 }
 
-__device__ float intersectSphereBV2(float x, float y, float z, float r, vec3 &rayorig, vec3 &raydir)
-{
-	vec3 l = { 0 };
-	l[0] = x - rayorig[0];
-	l[1] = y - rayorig[1];
-	l[2] = z - rayorig[2];
-
-	float tca = dot(l, raydir);
-	if (tca < 0) return -1.0f;
-	float d2 = dot(l, l) - tca * tca;
-	if (d2 > r*r) return -1.0f;
-	float thc = sqrt((r*r) - d2);
-
-	float tmp1 = tca - thc;
-	float tmp2 = tca + thc;
-
-	if (tmp1 < 0) return tmp2;
-	return tmp1;
-}
 
 //Check whether the ray reaches and intersects the sphere
 //Used to offer early-out to the algorithm
@@ -856,10 +821,12 @@ __device__ void intersectBVH(BVH* bvh
 	//TODO: traverse to avoid BVH holes (where we get a miss from one BV, and don't check any others which would result in a hit!)
 
 	//Traverse tree
-	if (intersectSphereBV(bvh[currentBVIdx].centre[0]
+	if (intersectBox(bvh[currentBVIdx].centre[0]
 		, bvh[currentBVIdx].centre[1]
 		, bvh[currentBVIdx].centre[2]
-		, bvh[currentBVIdx].radius
+		, bvh[currentBVIdx].maxCorner[0]
+		, bvh[currentBVIdx].maxCorner[1]
+		, bvh[currentBVIdx].maxCorner[2]
 		//, rayorig[0], rayorig[1], rayorig[2], raydir[0], raydir[1], raydir[2])) {
 		, rayorig, raydir)) {
 		
@@ -890,17 +857,21 @@ __device__ void intersectBVH(BVH* bvh
 			int front = bvh[currentBVIdx].front;
 			int back = bvh[currentBVIdx].back;
 
-			bool overlapL = (front > -1) ? intersectSphereBV(bvh[front].centre[0]
+			bool overlapL = (front > -1) ? intersectBox(bvh[front].centre[0]
 				, bvh[front].centre[1]
 				, bvh[front].centre[2]
-				, bvh[front].radius
+				, bvh[front].maxCorner[0]
+				, bvh[front].maxCorner[1]
+				, bvh[front].maxCorner[2]
 				//, rayorig[0], rayorig[1], rayorig[2], raydir[0], raydir[1], raydir[2])) {
 				, rayorig, raydir) : false;
 
-			bool overlapR = (back > -1) ? intersectSphereBV(bvh[back].centre[0]
+			bool overlapR = (back > -1) ? intersectBox(bvh[back].centre[0]
 				, bvh[back].centre[1]
 				, bvh[back].centre[2]
-				, bvh[back].radius
+				, bvh[back].maxCorner[0]
+				, bvh[back].maxCorner[1]
+				, bvh[back].maxCorner[2]
 				//, rayorig[0], rayorig[1], rayorig[2], raydir[0], raydir[1], raydir[2])) {
 				, rayorig, raydir) : false;
 
