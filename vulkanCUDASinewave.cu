@@ -469,8 +469,20 @@ __device__ float intersect(Sphere sphere, vec3 &rayorig, vec3 &raydir)
 }
 
 __device__ bool intersectBox(float x, float y, float z, float x2, float y2, float z2, vec3 &rayorig, vec3 &raydir) {
+	vec3 t0s = { 0 };
+	t0s[0] = ((x-x2 - (rayorig[0])) * (raydir[0]));
+	t0s[1] = ((y-y2 - (rayorig[1])) * (raydir[1]));
+	t0s[2] = ((z-z2 - (rayorig[2])) * (raydir[2]));
 
-	return true;
+	vec3 t1s = { 0 };
+	t1s[0] = ((x+x2 - (rayorig[0])) * (raydir[0]));
+	t1s[1] = ((y+y2 - (rayorig[1])) * (raydir[1]));
+	t1s[2] = ((z+z2 - (rayorig[2])) * (raydir[2]));
+
+	float tmin = max(min(t0s[0], t1s[0]), max(min(t0s[1], t1s[1]), min(t0s[2], t1s[2])));
+	float tmax = min(max(t0s[0], t1s[0]), min(max(t0s[1], t1s[1]), max(t0s[2], t1s[2])));
+
+	return (tmin < tmax);
 }
 
 
@@ -876,11 +888,11 @@ __device__ void intersectBVH(BVH* bvh
 				, rayorig, raydir) : false;
 
 			// Query overlaps a leaf node => report collision.
-			if (overlapL ){//&& bvh[bvh[currentBVIdx].front].hasTris) {
+			if (overlapL && bvh[bvh[currentBVIdx].front].hasTris) {
 				list[idx++] = front + 1;
 			}
 
-			if (overlapR) {//&& bvh[bvh[currentBVIdx].back].hasTris) {
+			if (overlapR && bvh[bvh[currentBVIdx].back].hasTris) {
 				list[idx++] = back + 1;
 			}
 
@@ -917,6 +929,7 @@ __device__ void intersectBVH(BVH* bvh
 					, ray_x, ray_y, ray_z
 					, maxDist);
 			}
+			
 			/*
 			if (outhit->col[0] + outhit->col[0] + outhit->col[0] <=2) {
 				//BVH hit, but tri miss

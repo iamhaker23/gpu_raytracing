@@ -335,20 +335,22 @@ void OBJLoader::createLinearBVH(std::vector<vector3d> barycentres, std::vector<v
 				newCentre[2] = (a.centre[2] + barycentres[x].pos[2])  / 2.0f;
 
 				vec3 acentredist = { 0 };
-				acentredist[0] = ((a.centre[0] - newCentre[0])*(a.centre[0] - newCentre[0]));
-				acentredist[1] = ((a.centre[1] - newCentre[1]) *(a.centre[1] - newCentre[1]));
-				acentredist[2] = ((a.centre[2] - newCentre[2]) *(a.centre[2] - newCentre[2]));
+				acentredist[0] = ((a.centre[0] - newCentre[0]) * (a.centre[0] - newCentre[0]));
+				acentredist[1] = ((a.centre[1] - newCentre[1]) * (a.centre[1] - newCentre[1]));
+				acentredist[2] = ((a.centre[2] - newCentre[2]) * (a.centre[2] - newCentre[2]));
 				vec3 bcentredist = { 0 };
-				bcentredist[0] = ((barycentres[x].pos[0] - newCentre[0]) *(barycentres[x].pos[0] - newCentre[0]));
-				bcentredist[1] = ((barycentres[x].pos[1] - newCentre[1]) *(barycentres[x].pos[1] - newCentre[1]));
-				bcentredist[2] = ((barycentres[x].pos[2] - newCentre[2]) *(barycentres[x].pos[2] - newCentre[2]));
+				bcentredist[0] = ((barycentres[x].pos[0] - newCentre[0]) * (barycentres[x].pos[0] - newCentre[0]));
+				bcentredist[1] = ((barycentres[x].pos[1] - newCentre[1]) * (barycentres[x].pos[1] - newCentre[1]));
+				bcentredist[2] = ((barycentres[x].pos[2] - newCentre[2]) * (barycentres[x].pos[2] - newCentre[2]));
 
 				float aBoxSize = sqrtf((a.maxCorner[0] * a.maxCorner[0]) + (a.maxCorner[1] * a.maxCorner[1]) + (a.maxCorner[2] * a.maxCorner[2]));
 				float mergableBoxSize = sqrtf((maxCorners[x].pos[0] * maxCorners[x].pos[0]) + (maxCorners[x].pos[1] * maxCorners[x].pos[1]) + (maxCorners[x].pos[2] * maxCorners[x].pos[2]));
 				
 				//radius is length from centre to cube corner
-				float ar = sqrtf(acentredist[0] + acentredist[1] + acentredist[2]) + aBoxSize;
-				float br = sqrtf(bcentredist[0] + bcentredist[1] + bcentredist[2]) + mergableBoxSize;
+				//float ar = sqrtf(acentredist[0] + acentredist[1] + acentredist[2]) + aBoxSize;
+				//float br = sqrtf(bcentredist[0] + bcentredist[1] + bcentredist[2]) + mergableBoxSize;
+				float ar = aBoxSize;
+				float br = mergableBoxSize;
 				float newRadius = (ar > br) ? ar : br;
 
 				//threshold for merging tris into same bvh
@@ -357,9 +359,9 @@ void OBJLoader::createLinearBVH(std::vector<vector3d> barycentres, std::vector<v
 					a.objIds.push_back(x);
 					//a.radius = ((a.radius < newRadius) ? newRadius : a.radius);
 
-					a.maxCorner[0] = (ar < br) ? ((barycentres[x].pos[0] - newCentre[0]) + maxCorners[x].pos[0]) : a.maxCorner[0];
-					a.maxCorner[1] = (ar < br) ? ((barycentres[x].pos[1] - newCentre[1]) + maxCorners[x].pos[1]) : a.maxCorner[1];
-					a.maxCorner[2] = (ar < br) ? ((barycentres[x].pos[2] - newCentre[2]) + maxCorners[x].pos[2]) : a.maxCorner[2];
+					a.maxCorner[0] = (ar < br) ? (maxCorners[x].pos[0]) : a.maxCorner[0];
+					a.maxCorner[1] = (ar < br) ? (maxCorners[x].pos[1]) : a.maxCorner[1];
+					a.maxCorner[2] = (ar < br) ? (maxCorners[x].pos[2]) : a.maxCorner[2];
 
 					a.centre[0] = newCentre[0];
 					a.centre[1] = newCentre[1];
