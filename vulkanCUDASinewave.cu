@@ -125,10 +125,11 @@
 #define WIDTH 1024
 #define HEIGHT 1024
 #define SHAPE_MODE 0
-#define BVH_DEBUG_VISUALISATION 0
+#define BVH_DEBUG_VISUALISATION 1
 #define CULLING 0
 //slower visual presentation when CPU prints with cout (but the frames are still rendered by CUDA as fast)
 #define PRINT_FPS 0
+#define NOISE_DAMPENING 100.0f
 
 #define ZFAR_TRIANGLE_RT -900.0f
 
@@ -139,6 +140,10 @@
 
 #define UV_FILTERING_ENABLED 1
 #define UV_FILTER_SIZE 1000.0f
+#define BVH_TRAVERSE_DEPTH 16
+
+//fps will be 1/2 this value
+#define DOUBLE_FPS 60
 
 #define USE_BVH 1
 
@@ -469,18 +474,32 @@ __device__ float intersect(Sphere sphere, vec3 &rayorig, vec3 &raydir)
 }
 
 __device__ bool intersectBox(float x, float y, float z, float x2, float y2, float z2, vec3 &rayorig, vec3 &raydir) {
+	return true;
+
 	vec3 t0s = { 0 };
-	t0s[0] = ((x-x2 - (rayorig[0])) * (raydir[0]));
-	t0s[1] = ((y-y2 - (rayorig[1])) * (raydir[1]));
-	t0s[2] = ((z-z2 - (rayorig[2])) * (raydir[2]));
+	t0s[0] = (((x-x2 - rayorig[0])) / raydir[0]);
+	t0s[1] = (((y-y2 - rayorig[1])) / raydir[1]);
+	t0s[2] = (((z-z2 - rayorig[2])) / raydir[2]);
 
 	vec3 t1s = { 0 };
-	t1s[0] = ((x+x2 - (rayorig[0])) * (raydir[0]));
-	t1s[1] = ((y+y2 - (rayorig[1])) * (raydir[1]));
-	t1s[2] = ((z+z2 - (rayorig[2])) * (raydir[2]));
+	t1s[0] = (((x+x2 - rayorig[0])) / raydir[0]);
+	t1s[1] = (((y+y2 - rayorig[1])) / raydir[1]);
+	t1s[2] = (((z+z2 - rayorig[2])) / raydir[2]);
 
-	float tmin = max(min(t0s[0], t1s[0]), max(min(t0s[1], t1s[1]), min(t0s[2], t1s[2])));
-	float tmax = min(max(t0s[0], t1s[0]), min(max(t0s[1], t1s[1]), max(t0s[2], t1s[2])));
+	bool forward = (
+		(t0s[0] * t0s[0]) +
+		(t0s[1] * t0s[1]) +
+		(t0s[2] * t0s[2]) 
+		)
+		<
+		(
+		(t1s[0] * t1s[0]) +
+			(t1s[1] * t1s[1]) +
+			(t1s[2] * t1s[2])
+		);
+
+	float tmin = (forward) ? (min(t0s[0], min(t0s[1], t0s[2]))) : (min(t1s[0], min(t1s[1], t1s[2])));
+	float tmax = (forward) ? (max(t1s[0], max(t1s[1], t1s[2]))) : (max(t0s[0], max(t0s[1], t0s[2])));
 
 	return (tmin < tmax);
 }
@@ -791,7 +810,8 @@ __device__ void intersectBVH(BVH* bvh
 	, float orig_x, float orig_y, float orig_z
 	, float ray_x, float ray_y, float ray_z
 	, float maxDist
-	, int currentBVIdx) {
+	, int currentBVIdx
+	, float noiseVal) {
 
 
 	outhit->pos[0] = 0;
@@ -827,10 +847,10 @@ __device__ void intersectBVH(BVH* bvh
 	int stackptr = 1;
 	
 	int idx = 0;
-	int list[128] = { 0 };
+	int list[BVH_TRAVERSE_DEPTH] = { 0 };
 	int iter = 0;
 
-	//TODO: traverse to avoid BVH holes (where we get a miss from one BV, and don't check any others which would result in a hit!)
+	//TODO: proper traversal of linear BVH
 
 	//Traverse tree
 	if (intersectBox(bvh[currentBVIdx].centre[0]
@@ -842,29 +862,16 @@ __device__ void intersectBVH(BVH* bvh
 		//, rayorig[0], rayorig[1], rayorig[2], raydir[0], raydir[1], raydir[2])) {
 		, rayorig, raydir)) {
 		
-		
+
+		//outhit->col[0] = 1;
+		//outhit->col[1] = 1;
+		//return;
 		
 		do {
 			//To force render all tris in all BVH
-		/*
-		for (int i = 0; i < 71; i++) {
-			if (intersectSphereBV(bvh[i].centre[0]
-				, bvh[i].centre[1]
-				, bvh[i].centre[2]
-				, bvh[i].radius
-				//, rayorig[0], rayorig[1], rayorig[2], raydir[0], raydir[1], raydir[2])) {
-				, rayorig, raydir)) {
-				intersectTris(
-					bvh[i].triIdx
-					, verts
-					, outhit
-					, factor
-					, bvh[i].numTris
-					, orig_x, orig_y, orig_z
-					, ray_x, ray_y, ray_z
-					, maxDist);
-			}
-			*/
+		
+		//for (int i = 0; i < 9; i++) {
+			
 			//TODO: bug - only shows some triangles from within the BVH and also, warping of triangles
 			int front = bvh[currentBVIdx].front;
 			int back = bvh[currentBVIdx].back;
@@ -911,9 +918,11 @@ __device__ void intersectBVH(BVH* bvh
 				}
 			}
 			iter++;
-		} while (stackptr > 0 && idx < 128);// && iter < 20);
+		} while (stackptr > 0 && idx < BVH_TRAVERSE_DEPTH);// && iter < 20);
 		
-		for (int i = 0; i < 128; i++) {
+		//float maxDist2 = maxDist;
+
+		for (int i = 0; i < BVH_TRAVERSE_DEPTH; i++) {
 
 
 			//traverse BVH hits 
@@ -925,19 +934,13 @@ __device__ void intersectBVH(BVH* bvh
 					, outhit
 					, factor
 					, bvh[list[i] - 1].numTris
-					, orig_x, orig_y, orig_z
+					, orig_x+noiseVal, orig_y-noiseVal, orig_z
 					, ray_x, ray_y, ray_z
-					, maxDist);
+					, maxDist);// 2);
+				 //maxDist2 = outhit->tmin;
 			}
 			
-			/*
-			if (outhit->col[0] + outhit->col[0] + outhit->col[0] <=2) {
-				//BVH hit, but tri miss
-				outhit->col[0] = 1;
-				outhit->col[1] = 1;
-			}
-			else break;
-			*/
+			
 			
 
 		}
@@ -1067,7 +1070,7 @@ __device__ void RaytraceTris(
 	int null = 0;
 	intersectTris(&null, verts, hitlist, factor, numTris, orig_x+noiseVal, orig_y-noiseVal, orig_z, ray_x, ray_y, ray_z, -1.0f);
 #else
-	intersectBVH(bvh, maxDepth, verts, hitlist, factor, numTris, orig_x+noiseVal, orig_y-noiseVal, orig_z, ray_x, ray_y, ray_z, -1.0f, 0);
+	intersectBVH(bvh, maxDepth, verts, hitlist, factor, numTris, orig_x, orig_y, orig_z, ray_x, ray_y, ray_z, -1.0f, 0, noiseVal);
 #endif
 
 	int tri = hitlist->triIndex;
@@ -1263,7 +1266,8 @@ __device__ void RaytraceTris(
 			, hitPos[2] + nnhit[2] * 1e-2
 			, toLight[0], toLight[1] , toLight[2]
 			, distToLight
-			, 0);//ambient light factor
+			, 0
+			, noiseVal);//ambient light factor
 
 		/*
 		int shadowCaster = hitlist->triIndex;
@@ -1581,7 +1585,7 @@ __device__ void RaytraceTris(
 				, hitlist
 				, light_mode
 				, x1, y1
-				, noiseVal*noiseVal);
+				, noiseVal);
 			//raytrace refr
 			//factor = (1.0f - diffuseBlend) * (1 - fresneleffect) * transp
 			if (light_mode >= 2) RaytraceTris<depth+1>(col
@@ -1596,12 +1600,12 @@ __device__ void RaytraceTris(
 				, hitlist
 				, light_mode
 				, x1, y1
-				, noiseVal*noiseVal);
+				, noiseVal);
 		}
 		
 		
 		//light attenuation here
-		float lightPow = max(0.8f, m / (0.001f * distToLight));
+		float lightPow = min(0.8f, m / (0.001f * distToLight));
 		blendCol(col, min(0.25f, m*m), lightPow*255.0f, lightPow*255.0f, lightPow*255.0f);
 
 		//float colMag = magnitude(diffCol);
@@ -2098,7 +2102,7 @@ __global__ void get_raytraced_pixels(
 #elif SHAPE_MODE == 0
 
 		int pixelIdx = (y_int * WIDTH) + (x_int);
-		float stocasticNoise = (pixels[pixelIdx].col[0] + pixels[pixelIdx].col[1] + pixels[pixelIdx].col[2]) / (3.0f * 255.0f);
+		float stocasticNoise = (pixels[pixelIdx].col[0] + pixels[pixelIdx].col[1] + pixels[pixelIdx].col[2]) / (NOISE_DAMPENING * 3.0f * 255.0f);
 		//float stocasticNoise2 = stocasticNoise * 50.0f;
 		RaytraceTris<1>(
 			//image
@@ -3746,7 +3750,7 @@ private:
 		//std::ratio<1, 60> gives 30fps
 		//std::ratio<1, 70> gives 35fps
 		//Affects screen refresh and CUDA work
-		int ticks = (int)(std::chrono::duration<float, std::ratio<1, 60>>(cNow - WIN_CTIME).count());
+		int ticks = (int)(std::chrono::duration<float, std::ratio<1, DOUBLE_FPS >>(cNow - WIN_CTIME).count());
 
 		if (((ticks % 2 == 1) && ticks != oldTicks)) {
 			WIN_CTIME = cNow;

@@ -138,16 +138,10 @@ struct BVH_BAKE {
 			((a->isActive) ? a->centre[2] : b->centre[2]) 
 			+ ((b->isActive) ? b->centre[2] : a->centre[2])) / 2;
 
-		float acentredistsq = ((a->centre[0] - centre[0])*(a->centre[0] - centre[0]))
-			+ ((a->centre[1] - centre[1])*(a->centre[1] - centre[1]))
-			+ ((a->centre[2] - centre[2])*(a->centre[2] - centre[2]));
-		float bcentredistsq = ((b->centre[0] - centre[0])*(b->centre[0] - centre[0]))
-			+ ((b->centre[1] - centre[1])*(b->centre[1] - centre[1]))
-			+ ((b->centre[2] - centre[2])*(b->centre[2] - centre[2]));
 
-		float ar = sqrtf(acentredistsq) + a->radius;
-		float br = sqrtf(bcentredistsq) + b->radius;
-		radius = (ar > br) ? ar : br;
+		this->maxCorner[0] = (a->maxCorner[0] + b->maxCorner[0]) / 2.0f;
+		this->maxCorner[1] = (a->maxCorner[1] + b->maxCorner[1]) / 2.0f;
+		this->maxCorner[2] = (a->maxCorner[2] + b->maxCorner[2]) / 2.0f;
 
 	}
 
