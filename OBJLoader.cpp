@@ -350,8 +350,19 @@ void OBJLoader::createLinearBVH(std::vector<vector3d> barycentres, std::vector<v
 				//TODO: I think the box needs all 8 corners to be checked for max from new centre
 				//a corners x8
 				//b corners x8
-				vector3d newMaxCorner = OBJLoader::getMaxCornerDim(newCentre, a, maxCorners[x], barycentres[x]);
-				std::cout << newMaxCorner.pos[0] << newMaxCorner.pos[1] << newMaxCorner.pos[2] << std::endl;
+				vector3d acorner = vector3d();
+				vector3d acentre = vector3d();
+
+				acorner.pos[0] = a.maxCorner[0];
+				acorner.pos[1] = a.maxCorner[1];
+				acorner.pos[2] = a.maxCorner[2];
+
+				acentre.pos[0] = a.centre[0];
+				acentre.pos[1] = a.centre[1];
+				acentre.pos[2] = a.centre[2];
+
+				vector3d newMaxCorner = util::getMaxCornerDim(newCentre, acorner, acentre, maxCorners[x], barycentres[x]);
+				//std::cout << newMaxCorner.pos[0] << newMaxCorner.pos[1] << newMaxCorner.pos[2] << std::endl;
 
 				vec3 acentredist = { 0 };
 				acentredist[0] = ((a.centre[0] - newCentre[0]) * (a.centre[0] - newCentre[0]));
@@ -364,7 +375,7 @@ void OBJLoader::createLinearBVH(std::vector<vector3d> barycentres, std::vector<v
 
 				float increase = 1.0f - (sqrtf(acentredist[0] + acentredist[1] + acentredist[2]) / sqrtf(bcentredist[0] + bcentredist[1] + bcentredist[2]));
 									
-				float threshold = 0.0f;// 87f;
+				float threshold = 0.85f;// 87f;
 
 
 				if (increase <= threshold) {
@@ -396,7 +407,7 @@ void OBJLoader::createLinearBVH(std::vector<vector3d> barycentres, std::vector<v
 		bounds.push_back(a);
 	}
 
-	if (static_cast<int>(merged.size()) > 0) std::cout << "avg ratio between combined bvh boxes=" << totalIncreases / static_cast<int>(merged.size()) << std::endl;
+	//if (static_cast<int>(merged.size()) > 0) std::cout << "avg ratio between combined bvh boxes=" << totalIncreases / static_cast<int>(merged.size()) << std::endl;
 
 	unsigned int* sortedMortonCodes = new unsigned int[num];
 	//int* sortedObjectIds = new int[num];
@@ -429,19 +440,6 @@ void OBJLoader::createLinearBVH(std::vector<vector3d> barycentres, std::vector<v
 
 }
 
-vector3d OBJLoader::getMaxCornerDim(vec3 centre, TriangleBounds a, vector3d bCorner, vector3d bCentre) {
-
-	float x = max(a.maxCorner[0] + abs(a.centre[0] - centre[0]), bCorner.pos[0] + abs(bCentre.pos[0] - centre[0]));
-	float y = max(a.maxCorner[1] + abs(a.centre[1] - centre[1]), bCorner.pos[1] + abs(bCentre.pos[1] - centre[1]));
-	float z = max(a.maxCorner[2] + abs(a.centre[2] - centre[2]), bCorner.pos[2] + abs(bCentre.pos[2] - centre[2]));
-
-	vector3d b = vector3d();
-	b.pos[0] =  x;
-	b.pos[1] =  y;
-	b.pos[2] =  z;
-	return b;
-
-}
 
 
 BVH_BAKE*  OBJLoader::generateHierarchy(unsigned int* sortedMortonCodes,
@@ -529,22 +527,6 @@ int OBJLoader::countBVHNeeded(Vertex* vertData, int numVerts) {
 		barycenters.push_back(barycenter);
 
 		float distances[3] = { 0 };
-		float distances2[3] = { 0 };
-		
-		distances2[0] = ((barycenter.pos[0] - vertData[i].pos[0]) *(barycenter.pos[0] - vertData[i].pos[0]))
-					+ ((barycenter.pos[1] - vertData[i].pos[1]) *(barycenter.pos[1] - vertData[i].pos[1]))
-					+ ((barycenter.pos[2] - vertData[i].pos[2]) *(barycenter.pos[2] - vertData[i].pos[2]));
-		
-		distances2[1] = ((barycenter.pos[0] - vertData[i+1].pos[0]) *(barycenter.pos[0] - vertData[i + 1].pos[0]))
-					+ ((barycenter.pos[1] - vertData[i + 1].pos[1]) *(barycenter.pos[1] - vertData[i + 1].pos[1]))
-					+ ((barycenter.pos[2] - vertData[i + 1].pos[2]) *(barycenter.pos[2] - vertData[i + 1].pos[2]));
-		
-		distances2[2] = ((barycenter.pos[0] - vertData[i + 2].pos[0]) *(barycenter.pos[0] - vertData[i + 2].pos[0]))
-					+ ((barycenter.pos[1] - vertData[i + 2].pos[1]) *(barycenter.pos[1] - vertData[i + 2].pos[1]))
-					+ ((barycenter.pos[2] - vertData[i + 2].pos[2]) *(barycenter.pos[2] - vertData[i + 2].pos[2]));
-		
-		//float radius = sqrtf(max(max(distances[0], distances[1]), distances[2])) +padding;
-		//std::cout << "Radius:" << radius << std::endl;
 
 		distances[0] = max(abs(barycenter.pos[0] - vertData[i].pos[0]),
 			max(abs(barycenter.pos[0] - vertData[i + 1].pos[0]),
@@ -559,18 +541,16 @@ int OBJLoader::countBVHNeeded(Vertex* vertData, int numVerts) {
 				abs(barycenter.pos[2] - vertData[i + 2].pos[2])));
 
 		vector3d maxCorner = vector3d();
-		//maxCorner.pos[0] = sqrtf(distances[0]);
-		//maxCorner.pos[1] = sqrtf(distances[1]);
-		//maxCorner.pos[2] = sqrtf(distances[2]);
-		maxCorner.pos[0] = distances[0] + 200.0f;
-		maxCorner.pos[1] = distances[1] + 200.0f;
-		maxCorner.pos[2] = distances[2] + 200.0f;
+		
+		maxCorner.pos[0] =  distances[0];
+		maxCorner.pos[1] =  distances[1];
+		maxCorner.pos[2] =  distances[2];
 		
 		maxCorners.push_back(maxCorner);
 
-		if (cubeSize[0] < abs(distances2[0]) + abs(barycenter.pos[0])) cubeSize[0] = abs(distances2[0]) + abs(barycenter.pos[0] );
-		if (cubeSize[1] < abs(distances2[1]) + abs(barycenter.pos[1])) cubeSize[1] = abs(distances2[1]) + abs(barycenter.pos[1] );
-		if (cubeSize[2] < abs(distances2[2]) + abs(barycenter.pos[2])) cubeSize[2] = abs(distances2[2]) + abs(barycenter.pos[2] );
+		if (cubeSize[0] < abs(distances[0]) + abs(barycenter.pos[0])) cubeSize[0] = abs(distances[0]) + abs(barycenter.pos[0] );
+		if (cubeSize[1] < abs(distances[1]) + abs(barycenter.pos[1])) cubeSize[1] = abs(distances[1]) + abs(barycenter.pos[1] );
+		if (cubeSize[2] < abs(distances[2]) + abs(barycenter.pos[2])) cubeSize[2] = abs(distances[2]) + abs(barycenter.pos[2] );
 	}
 
 	float sceneCentroid[3] = { 0 };

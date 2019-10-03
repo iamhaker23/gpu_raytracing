@@ -492,7 +492,7 @@ __device__ bool intersectBox(float x, float y, float z, float x2, float y2, floa
 	float tmin = max(min(t0s[0], t1s[0]), max(min(t0s[1], t1s[1]), min(t0s[2], t1s[2])));
 	float tmax = min(max(t0s[0], t1s[0]), min(max(t0s[1], t1s[1]), max(t0s[2], t1s[2])));
 
-	return (tmin <= tmax);
+	return (tmin < tmax);
 }
 
 
@@ -824,10 +824,10 @@ __device__ void intersectBVH(BVH* bvh
 	raydir[0] = ray_x;
 	raydir[1] = ray_y;
 	raydir[2] = ray_z;
-	//float raydirmag = magnitude(raydir);
-	//raydir[0] /= raydirmag;
-	//raydir[1] /= raydirmag;
-	//raydir[2] /= raydirmag;
+	float raydirmag = magnitude(raydir);
+	raydir[0] /= raydirmag;
+	raydir[1] /= raydirmag;
+	raydir[2] /= raydirmag;
 
 	vec3 rayorig = { 0 };
 	rayorig[0] = orig_x;
@@ -912,7 +912,7 @@ __device__ void intersectBVH(BVH* bvh
 		} while (stackptr > 0 && idx < BVH_TRAVERSE_DEPTH);// && iter < 20);
 		
 		//float maxDist2 = maxDist;
-
+		bool bvhhit = false;
 		for (int i = 0; i < BVH_TRAVERSE_DEPTH; i++) {
 
 
@@ -929,14 +929,19 @@ __device__ void intersectBVH(BVH* bvh
 					, orig_x+noiseVal, orig_y-noiseVal, orig_z
 					, ray_x, ray_y, ray_z
 					, maxDist);// 2);
-					
+				bvhhit = true;
 				 //maxDist2 = outhit->tmin;
+				
 			}
-			
 			
 			
 
 		}
+
+		if (bvhhit && outhit->col[0] + outhit->col[1] + outhit->col[2] == 0.0f) {
+			outhit->col[0] = 1.0f;
+		}
+
 	}
 	
 }

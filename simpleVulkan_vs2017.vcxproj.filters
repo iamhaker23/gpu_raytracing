@@ -7,6 +7,7 @@
     <ClInclude Include="linmath.h" />
     <ClInclude Include="OBJLoader.h" />
     <ClInclude Include="Vertex.h" />
+    <ClInclude Include="vector3d.h" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="Shaders">
@@ -23,5 +24,6 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="OBJLoader.cpp" />
+    <ClCompile Include="vector3d.cpp" />
   </ItemGroup>
 </Project>

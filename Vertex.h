@@ -1,5 +1,6 @@
 #pragma once
 #include "linmath.h"
+#include "vector3d.h"
 
 //TODO: handle chunking correctly (need to add chunked BVH at "count time" but currently uses pointer) 
 #define BVH_CHUNK_SIZE 4000
@@ -139,9 +140,32 @@ struct BVH_BAKE {
 			+ ((b->isActive) ? b->centre[2] : a->centre[2])) / 2;
 
 
-		this->maxCorner[0] = (a->maxCorner[0] + b->maxCorner[0]) / 2.0f;
-		this->maxCorner[1] = (a->maxCorner[1] + b->maxCorner[1]) / 2.0f;
-		this->maxCorner[2] = (a->maxCorner[2] + b->maxCorner[2]) / 2.0f;
+		vector3d aco  = vector3d();
+		vector3d ace = vector3d();
+
+		aco.pos[0] = a->maxCorner[0];
+		aco.pos[1] = a->maxCorner[1];
+		aco.pos[2] = a->maxCorner[2];
+
+		ace.pos[0] = a->centre[0];
+		ace.pos[1] = a->centre[1];
+		ace.pos[2] = a->centre[2];
+
+		vector3d bco = vector3d();
+		vector3d bce = vector3d();
+
+		bco.pos[0] = b->maxCorner[0];
+		bco.pos[1] = b->maxCorner[1];
+		bco.pos[2] = b->maxCorner[2];
+
+		bce.pos[0] = b->centre[0];
+		bce.pos[1] = b->centre[1];
+		bce.pos[2] = b->centre[2];
+
+		vector3d newCorner = util::getMaxCornerDim(centre, aco, ace, bco, bce);
+		maxCorner[0] = newCorner.pos[0];
+		maxCorner[1] = newCorner.pos[1];
+		maxCorner[2] = newCorner.pos[2];
 
 	}
 

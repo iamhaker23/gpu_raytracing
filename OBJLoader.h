@@ -69,12 +69,6 @@ public:
 
 };
 
-//Wrapper for vec3 since you cannot store an array directly in an STL vector object
-struct vector3d {
-
-	vec3 pos = { 0 };
-
-};
 
 
 class OBJLoader {
@@ -89,6 +83,9 @@ public:
 	static void OBJLoader::freeBVHState();
 
 	static int OBJLoader::getMaxDepth();
+
+	//static vector3d getMaxCornerDim(vec3 centre, vector3d aCorner, vector3d , vector3d bCorner, vector3d bCentre);
+
 private:
 	
 
@@ -108,7 +105,6 @@ private:
 	};
 
 
-	static vector3d getMaxCornerDim(vec3 centre, TriangleBounds a, vector3d bCorner, vector3d bCentre);
 
 	static bool OBJLoader::mortonCodeSort(TriangleBounds a, TriangleBounds b);
 

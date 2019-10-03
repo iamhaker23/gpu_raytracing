@@ -119,6 +119,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="OBJLoader.h" />
+    <ClInclude Include="vector3d.h" />
     <ClInclude Include="Vertex.h" />
     <CudaCompile Include="vulkanCUDASinewave.cu" />
     <ClInclude Include="linmath.h" />
@@ -129,6 +130,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="OBJLoader.cpp" />
+    <ClCompile Include="vector3d.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
