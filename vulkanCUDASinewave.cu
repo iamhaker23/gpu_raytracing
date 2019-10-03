@@ -474,7 +474,9 @@ __device__ float intersect(Sphere sphere, vec3 &rayorig, vec3 &raydir)
 }
 
 __device__ bool intersectBox(float x, float y, float z, float x2, float y2, float z2, vec3 &rayorig, vec3 &raydir) {
-	return true;
+	
+	//TODO: why this causes BVH holes!?
+	//return true;
 
 	vec3 t0s = { 0 };
 	t0s[0] = (((x-x2 - rayorig[0])) / raydir[0]);
@@ -486,22 +488,11 @@ __device__ bool intersectBox(float x, float y, float z, float x2, float y2, floa
 	t1s[1] = (((y+y2 - rayorig[1])) / raydir[1]);
 	t1s[2] = (((z+z2 - rayorig[2])) / raydir[2]);
 
-	bool forward = (
-		(t0s[0] * t0s[0]) +
-		(t0s[1] * t0s[1]) +
-		(t0s[2] * t0s[2]) 
-		)
-		<
-		(
-		(t1s[0] * t1s[0]) +
-			(t1s[1] * t1s[1]) +
-			(t1s[2] * t1s[2])
-		);
 
-	float tmin = (forward) ? (min(t0s[0], min(t0s[1], t0s[2]))) : (min(t1s[0], min(t1s[1], t1s[2])));
-	float tmax = (forward) ? (max(t1s[0], max(t1s[1], t1s[2]))) : (max(t0s[0], max(t0s[1], t0s[2])));
+	float tmin = max(min(t0s[0], t1s[0]), max(min(t0s[1], t1s[1]), min(t0s[2], t1s[2])));
+	float tmax = min(max(t0s[0], t1s[0]), min(max(t0s[1], t1s[1]), max(t0s[2], t1s[2])));
 
-	return (tmin < tmax);
+	return (tmin <= tmax);
 }
 
 
@@ -833,10 +824,10 @@ __device__ void intersectBVH(BVH* bvh
 	raydir[0] = ray_x;
 	raydir[1] = ray_y;
 	raydir[2] = ray_z;
-	float raydirmag = magnitude(raydir);
-	raydir[0] /= raydirmag;
-	raydir[1] /= raydirmag;
-	raydir[2] /= raydirmag;
+	//float raydirmag = magnitude(raydir);
+	//raydir[0] /= raydirmag;
+	//raydir[1] /= raydirmag;
+	//raydir[2] /= raydirmag;
 
 	vec3 rayorig = { 0 };
 	rayorig[0] = orig_x;
@@ -928,6 +919,7 @@ __device__ void intersectBVH(BVH* bvh
 			//traverse BVH hits 
 
 			if (list[i] - 1 >= 0) {
+				//outhit->col[0] = 1.0f;
 				intersectTris(
 					bvh[list[i] - 1].triIdx
 					, verts
@@ -937,6 +929,7 @@ __device__ void intersectBVH(BVH* bvh
 					, orig_x+noiseVal, orig_y-noiseVal, orig_z
 					, ray_x, ray_y, ray_z
 					, maxDist);// 2);
+					
 				 //maxDist2 = outhit->tmin;
 			}
 			

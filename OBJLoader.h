@@ -106,6 +106,10 @@ private:
 		}
 
 	};
+
+
+	static vector3d getMaxCornerDim(vec3 centre, TriangleBounds a, vector3d bCorner, vector3d bCentre);
+
 	static bool OBJLoader::mortonCodeSort(TriangleBounds a, TriangleBounds b);
 
 	static BVH_BAKE*  OBJLoader::generateHierarchy(unsigned int* sortedMortonCodes,
